@@ -60,9 +60,10 @@ npm start                             # http://localhost:3000
 ```
 
 Open <http://localhost:3000> in Chrome, press the mic (or the space bar), and talk. The
-controlled browser starts on a built-in demo site at `/demo`; say “open …” to go anywhere.
-Set `HEADLESS=false` to also see the real Chromium window, and `START_URL` to start
-elsewhere.
+controlled browser starts on Google (`START_URL` to change it); say “open …” to go
+anywhere. A small built-in site at `/demo` is there for offline testing and is used
+automatically if the start page can't be reached. Set `HEADLESS=false` to also see the
+real Chromium window.
 
 Microphone access needs a secure context: `http://localhost` or `https://`. Only *final*
 transcripts are sent to the server; interim text is displayed but never acted on.

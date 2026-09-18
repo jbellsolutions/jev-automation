@@ -5,7 +5,11 @@ import { type PageSnapshot, extractElements } from "./elements.js";
 export interface BrowserOptions {
   headless: boolean;
   executablePath?: string;
+  /** Extra Chromium command-line switches (e.g. proxy or trust settings). */
+  args?: string[];
   startUrl: string;
+  /** Local page to show when the start URL cannot be reached (offline, blocked). */
+  fallbackUrl?: string;
   viewport: { width: number; height: number };
 }
 
@@ -24,6 +28,7 @@ export class BrowserSession {
       this.browser = await chromium.launch({
         headless: this.options.headless,
         executablePath: this.options.executablePath || undefined,
+        args: this.options.args ?? [],
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -32,7 +37,22 @@ export class BrowserSession {
     this.context = await this.browser.newContext({ viewport: this.options.viewport });
     this.context.on("page", (p) => this.adopt(p));
     this.adopt(await this.context.newPage());
-    await this.goto(this.options.startUrl);
+    try {
+      await this.goto(this.options.startUrl);
+    } catch (err) {
+      if (!this.options.fallbackUrl) throw err;
+      console.warn(`${err instanceof Error ? err.message : err}\nFalling back to ${this.options.fallbackUrl}`);
+      // Chromium is still swapping in its error page; give it a beat, then retry once.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await this.active.waitForTimeout(400);
+        try {
+          await this.goto(this.options.fallbackUrl);
+          return;
+        } catch (fallbackErr) {
+          if (attempt === 1) console.warn(fallbackErr instanceof Error ? fallbackErr.message : fallbackErr);
+        }
+      }
+    }
   }
 
   private adopt(p: Page): void {

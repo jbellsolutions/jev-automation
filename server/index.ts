@@ -28,7 +28,9 @@ const decider = createDecider();
 const browser = new BrowserSession({
   headless: HEADLESS,
   executablePath: process.env.CHROMIUM_EXECUTABLE_PATH,
-  startUrl: process.env.START_URL ?? `http://localhost:${PORT}/demo`,
+  args: (process.env.CHROMIUM_ARGS ?? "").split(/\s+/).filter(Boolean),
+  startUrl: process.env.START_URL ?? "https://www.google.com",
+  fallbackUrl: `http://localhost:${PORT}/demo`,
   viewport: VIEWPORT,
 });
 
