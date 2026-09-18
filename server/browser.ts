@@ -11,7 +11,13 @@ export interface BrowserOptions {
   /** Local page to show when the start URL cannot be reached (offline, blocked). */
   fallbackUrl?: string;
   viewport: { width: number; height: number };
+  /** Device pixels per CSS pixel for screenshots; 2 keeps text crisp on HiDPI displays. */
+  deviceScaleFactor: number;
+  /** JPEG quality of the streamed frames (1–100). */
+  jpegQuality: number;
 }
+
+export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, maxHeight: 1200 };
 
 /** One Chromium controlled through Playwright. Single-user by design: one page at a
  *  time, switching to popups/new tabs automatically so "open in new tab" links work. */
@@ -34,7 +40,7 @@ export class BrowserSession {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Could not launch Chromium. Run "npx playwright install chromium" or set CHROMIUM_EXECUTABLE_PATH.\n${msg}`);
     }
-    this.context = await this.browser.newContext({ viewport: this.options.viewport });
+    this.context = await this.browser.newContext({ viewport: this.options.viewport, deviceScaleFactor: this.options.deviceScaleFactor });
     this.context.on("page", (p) => this.adopt(p));
     this.adopt(await this.context.newPage());
     try {
@@ -86,6 +92,23 @@ export class BrowserSession {
     return this.page;
   }
 
+  get viewport(): { width: number; height: number } {
+    return this.options.viewport;
+  }
+
+  /** Resize the page to match the space the UI has, so frames are never scaled in CSS. */
+  async setViewport(width: number, height: number): Promise<boolean> {
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+    const next = {
+      width: clamp(width, VIEWPORT_LIMITS.minWidth, VIEWPORT_LIMITS.maxWidth),
+      height: clamp(height, VIEWPORT_LIMITS.minHeight, VIEWPORT_LIMITS.maxHeight),
+    };
+    if (next.width === this.options.viewport.width && next.height === this.options.viewport.height) return false;
+    this.options.viewport = next;
+    await this.active.setViewportSize(next);
+    return true;
+  }
+
   get url(): string {
     return this.page?.url() ?? "about:blank";
   }
@@ -117,7 +140,7 @@ export class BrowserSession {
 
   async screenshot(): Promise<Buffer | null> {
     try {
-      return await this.active.screenshot({ type: "jpeg", quality: 60, timeout: 3000 });
+      return await this.active.screenshot({ type: "jpeg", quality: this.options.jpegQuality, timeout: 3000 });
     } catch {
       return null;
     }

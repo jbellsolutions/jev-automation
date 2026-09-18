@@ -18,7 +18,7 @@
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}`);
-    ws.onopen = () => setStatus("Connected", "ok");
+    ws.onopen = () => { setStatus("Connected", "ok"); sendViewport(); };
     ws.onclose = () => { setStatus("Disconnected — retrying…", "warn"); setTimeout(connect, 1500); };
     ws.onmessage = (ev) => { try { onMessage(JSON.parse(ev.data)); } catch (e) { console.error(e); } };
   }
@@ -30,6 +30,9 @@
         viewport = msg.viewport;
         els.pill.textContent = msg.jev.enabled ? `Jev · ${msg.jev.model}` : "heuristic mode · no TYPESAFE_API_KEY";
         els.pill.className = `pill ${msg.jev.enabled ? "jev" : "heuristic"}`;
+        break;
+      case "viewport":
+        viewport = { width: msg.width, height: msg.height };
         break;
       case "screenshot":
         els.screen.src = `data:image/jpeg;base64,${msg.jpegBase64}`;
@@ -120,8 +123,18 @@
   els.screen.onclick = (e) => {
     const r = els.screen.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    send({ type: "click_at", x: ((e.clientX - r.left) / r.width) * viewport.width, y: ((e.clientY - r.top) / r.height) * viewport.height });
+    send({ type: "click_at", fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height });
   };
+
+  // Size the real browser's viewport to the space we have, so frames are never
+  // stretched in CSS (the server captures at 2x for HiDPI screens).
+  let viewportTimer = null;
+  function sendViewport() {
+    const box = els.screen.parentElement.getBoundingClientRect();
+    if (box.width < 100 || box.height < 100) return;
+    send({ type: "viewport", width: Math.round(box.width), height: Math.round(box.height) });
+  }
+  window.addEventListener("resize", () => { clearTimeout(viewportTimer); viewportTimer = setTimeout(sendViewport, 300); });
 
   // ---------------------------------------------------------------- speech
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;

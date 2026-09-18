@@ -14,6 +14,8 @@ import type { ClientMessage, DecisionSummary, ServerMessage } from "./protocol.j
 const PORT = Number(process.env.PORT ?? 3000);
 const HEADLESS = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
 const VIEWPORT = { width: 1280, height: 800 };
+const DEVICE_SCALE_FACTOR = Number(process.env.DEVICE_SCALE_FACTOR ?? 2);
+const JPEG_QUALITY = Number(process.env.JPEG_QUALITY ?? 80);
 const SCREENSHOT_INTERVAL_MS = 700;
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -31,7 +33,9 @@ const browser = new BrowserSession({
   args: (process.env.CHROMIUM_ARGS ?? "").split(/\s+/).filter(Boolean),
   startUrl: process.env.START_URL ?? "https://www.google.com",
   fallbackUrl: `http://localhost:${PORT}/demo`,
-  viewport: VIEWPORT,
+  viewport: { ...VIEWPORT },
+  deviceScaleFactor: DEVICE_SCALE_FACTOR,
+  jpegQuality: JPEG_QUALITY,
 });
 
 app.get("/api/health", (_req, res) => {
@@ -164,7 +168,7 @@ function enqueue(task: () => Promise<void>): void {
 }
 
 wss.on("connection", (ws) => {
-  const hello: ServerMessage = { type: "hello", jev: { enabled: decider.enabled, model: decider.model }, viewport: VIEWPORT };
+  const hello: ServerMessage = { type: "hello", jev: { enabled: decider.enabled, model: decider.model }, viewport: browser.viewport };
   ws.send(JSON.stringify(hello));
   shotDirty = true;
   void pushScreenshot(true);
@@ -197,8 +201,22 @@ wss.on("connection", (ws) => {
         });
         break;
       case "click_at":
-        if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
-          enqueue(() => run({ kind: "click_at", x: Math.round(msg.x), y: Math.round(msg.y) }));
+        if (Number.isFinite(msg.fx) && Number.isFinite(msg.fy)) {
+          const { width, height } = browser.viewport;
+          const x = Math.round(Math.min(1, Math.max(0, msg.fx)) * width);
+          const y = Math.round(Math.min(1, Math.max(0, msg.fy)) * height);
+          enqueue(() => run({ kind: "click_at", x, y }));
+        }
+        break;
+      case "viewport":
+        if (Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
+          enqueue(async () => {
+            if (await browser.setViewport(msg.width, msg.height)) {
+              broadcast({ type: "viewport", ...browser.viewport });
+              shotDirty = true;
+              await pushScreenshot(true);
+            }
+          });
         }
         break;
       case "screenshot_request":

@@ -5,7 +5,10 @@ export type ClientMessage =
   | { type: "command"; text: string; via: "voice" | "text" }
   | { type: "confirm_reply"; ok: boolean }
   | { type: "pick"; elementId: string }
-  | { type: "click_at"; x: number; y: number }
+  /** Click on the live view; fx/fy are fractions (0–1) of the image so resizes stay accurate. */
+  | { type: "click_at"; fx: number; fy: number }
+  /** The pixel size the UI has available for the live view; the server sizes the viewport to match. */
+  | { type: "viewport"; width: number; height: number }
   | { type: "screenshot_request" };
 
 export interface DecisionSummary {
@@ -27,6 +30,7 @@ export interface DecisionSummary {
 export type ServerMessage =
   | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number } }
   | { type: "screenshot"; jpegBase64: string; url: string; title: string }
+  | { type: "viewport"; width: number; height: number }
   | { type: "status"; text: string; level: "info" | "busy" | "ok" | "warn" | "error" }
   | { type: "decision"; decision: DecisionSummary }
   | { type: "confirm"; actionLabel: string; reason: string }
