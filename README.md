@@ -56,8 +56,11 @@ npm install
 npx playwright install chromium      # once; skip if Playwright's Chromium is already present
 cp .env.example .env                  # add TYPESAFE_API_KEY=...
 export $(grep -v '^#' .env | xargs)   # or use your shell's dotenv of choice
-npm start                             # http://localhost:3000
+npm start                             # builds the client, then serves it at http://localhost:3000
 ```
+
+For development, `npm run dev` runs the Node server (with restart on change) and the Vite
+dev server with hot reload side by side — open <http://localhost:5173>.
 
 Open <http://localhost:3000> in Chrome, press the mic (or the space bar), and talk. The
 controlled browser starts on Google (`START_URL` to change it); say “open …” to go
@@ -71,22 +74,28 @@ transcripts are sent to the server; interim text is displayed but never acted on
 ## Project layout
 
 ```
-server/
-  index.ts     HTTP + WebSocket server, command queue, confirm/clarify state, screenshot stream
-  decide.ts    Jev request builder, answer interpretation, thresholds, heuristic fallback
-  commands.ts  speech normalization and verbatim extraction (URLs, text to type, yes/no, ordinals)
-  elements.ts  in-page script that lists interactive elements → Jev choice options
-  browser.ts   Playwright session: snapshot, screenshot, execute(Action)
-  actions.ts   the Action union the browser can execute
-  protocol.ts  WebSocket message types shared with the UI
-  demo.ts      the local demo site
-public/        the web app (vanilla HTML/CSS/JS, Web Speech API)
-test/          vitest unit tests (pure logic + Jev client with a mocked fetch)
+server/                      Node + TypeScript (Express, ws, Playwright, @typesafe-ai/sdk)
+  index.ts                   HTTP + WebSocket server, command queue, confirm/clarify state, frame stream
+  decide.ts                  Jev request builder, answer interpretation, thresholds, heuristic fallback
+  commands.ts                speech normalization and verbatim extraction (URLs, text to type, yes/no, ordinals)
+  elements.ts                in-page script that lists interactive elements → Jev choice options
+  browser.ts                 Playwright session: snapshot, screenshot, viewport, execute(Action)
+  actions.ts                 the Action union the browser can execute
+  protocol.ts                WebSocket message types — imported by BOTH server and client
+  demo.ts                    the local demo site
+client/                      React 19 + Vite + TypeScript
+  src/App.tsx                wires socket, speech and state together
+  src/state.ts               one reducer: every server message → UI state (pure, unit-tested)
+  src/hooks/useSocket.ts     typed WebSocket with auto-reconnect
+  src/hooks/useSpeechRecognition.ts   Web Speech API: continuous listening, interim vs final results
+  src/components/            LiveView, MicButton, CommandInput, ConfirmCard, ClarifyCard, DecisionLog, TopBar, Help
+test/                        vitest unit tests for the server logic (Jev client tested with a mocked fetch)
 ```
 
 ```bash
-npm test          # unit tests
-npm run typecheck
+npm test          # unit tests (server logic + client reducer)
+npm run typecheck # server and client
+npm run check     # typecheck + tests + production build
 ```
 
 ## Safety model

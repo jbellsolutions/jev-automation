@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,10 +19,14 @@ const DEVICE_SCALE_FACTOR = Number(process.env.DEVICE_SCALE_FACTOR ?? 2);
 const JPEG_QUALITY = Number(process.env.JPEG_QUALITY ?? 80);
 const SCREENSHOT_INTERVAL_MS = 700;
 
-const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "client");
 
 const app = express();
-app.use(express.static(publicDir));
+app.use(express.static(clientDir));
+app.get("/", (_req, res, next) => {
+  if (existsSync(path.join(clientDir, "index.html"))) return next();
+  res.status(503).type("text").send("Client not built. Run `npm run build` (or `npm run dev` for the Vite dev server on :5173).");
+});
 app.get("/demo", (req, res) => {
   res.type("html").send(demoPage(String(req.query.page ?? "home")));
 });
@@ -43,7 +48,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, path: "/ws" });
 
 function broadcast(msg: ServerMessage): void {
   const data = JSON.stringify(msg);
@@ -234,7 +239,7 @@ async function main(): Promise<void> {
     shotDirty = true;
   });
   setInterval(() => void pushScreenshot(), SCREENSHOT_INTERVAL_MS);
-  console.log(`Jev voice browser → http://localhost:${PORT}`);
+  console.log(`Jev voice browser → http://localhost:${PORT}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
 }
 
