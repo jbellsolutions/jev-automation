@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { ClientMessage, ServerMessage } from "../../../core/protocol.ts";
+import type { Transport } from "../transport.ts";
 
 /** WebSocket to the server with auto-reconnect. Messages are typed end to end. */
-export function useSocket(onMessage: (msg: ServerMessage) => void, onOpen: (connected: boolean) => void) {
+export function useSocket(transport: Transport, onMessage: (msg: ServerMessage) => void, onOpen: (connected: boolean) => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const handlers = useRef({ onMessage, onOpen });
   handlers.current = { onMessage, onOpen };
@@ -11,8 +12,7 @@ export function useSocket(onMessage: (msg: ServerMessage) => void, onOpen: (conn
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const connect = () => {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      const ws = new WebSocket(transport.wsUrl("/ws"));
       wsRef.current = ws;
       ws.onopen = () => handlers.current.onOpen(true);
       ws.onclose = () => {
@@ -33,7 +33,7 @@ export function useSocket(onMessage: (msg: ServerMessage) => void, onOpen: (conn
       clearTimeout(retry);
       wsRef.current?.close();
     };
-  }, []);
+  }, [transport]);
 
   return useCallback((msg: ClientMessage) => {
     const ws = wsRef.current;

@@ -66,6 +66,8 @@ export interface HubOptions {
   screenshotIntervalMs: number;
   /** Session id programmatic callers and new UIs get when they don't name one. */
   defaultSession?: string;
+  /** Name of the streaming STT provider, announced to UIs so they can pick voice input. */
+  sttProvider?: string | null;
 }
 
 export class Hub {
@@ -137,6 +139,7 @@ export class Hub {
       type: "hello",
       jev: { enabled: this.opts.decider.enabled, model: this.opts.decider.model },
       viewport: executor.viewport,
+      stt: { provider: this.opts.sttProvider ?? null },
     };
     ws.send(JSON.stringify(hello));
     e.streamer.start();

@@ -3,3 +3,6 @@ node_modules/
 *.log
 .playwright-profile/
 dist/
+
+# built native helpers
+native/jev-speech/jev-speech

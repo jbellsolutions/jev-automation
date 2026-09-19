@@ -23,6 +23,10 @@ export type Pending =
 export interface State {
   connected: boolean;
   jev: { enabled: boolean; model: string | null } | null;
+  /** Streaming STT provider announced by the server, or null for Web Speech. */
+  stt: string | null;
+  /** The assistant is currently talking. */
+  speaking: boolean;
   viewport: { width: number; height: number };
   page: { url: string; title: string; frame: string | null };
   status: { text: string; level: StatusLevel };
@@ -35,6 +39,8 @@ export type Event = ServerMessage | { type: "socket"; connected: boolean } | { t
 export const initialState: State = {
   connected: false,
   jev: null,
+  stt: null,
+  speaking: false,
   viewport: { width: 1280, height: 800 },
   page: { url: "about:blank", title: "", frame: null },
   status: { text: "Connecting…", level: "info" },
@@ -55,7 +61,9 @@ export function reducer(state: State, ev: Event): State {
     case "socket":
       return { ...state, connected: ev.connected, status: ev.connected ? { text: "Connected", level: "ok" } : { text: "Disconnected — retrying…", level: "warn" } };
     case "hello":
-      return { ...state, jev: ev.jev, viewport: ev.viewport };
+      return { ...state, jev: ev.jev, viewport: ev.viewport, stt: ev.stt?.provider ?? null };
+    case "speaking":
+      return { ...state, speaking: ev.active };
     case "viewport":
       return { ...state, viewport: { width: ev.width, height: ev.height } };
     case "screenshot":

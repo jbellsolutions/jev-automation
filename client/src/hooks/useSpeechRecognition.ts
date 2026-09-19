@@ -22,7 +22,9 @@ function getCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-export type SpeechAvailability = "ok" | "unsupported" | "insecure";
+import type { VoiceAvailability } from "./voice.ts";
+
+export type SpeechAvailability = VoiceAvailability;
 
 /** Continuous speech recognition in the browser. Only FINAL results reach `onFinal`;
  *  interim text is exposed for display and never acted on. */

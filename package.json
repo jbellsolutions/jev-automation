@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p client",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "build:native": "sh scripts/build-native.sh",
+    "stt:smoke": "tsx scripts/stt-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

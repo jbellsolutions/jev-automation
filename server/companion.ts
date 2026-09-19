@@ -13,6 +13,8 @@ import { type Auth, allowedOrigins, createAuth, originAllowed } from "./auth.js"
 import { demoPage } from "./demo.js";
 import { createApi } from "./http.js";
 import { Hub } from "./hub.js";
+import { attachSttRelay } from "./stt/relay.js";
+import type { SttProvider } from "./stt/types.js";
 
 export interface CompanionOptions {
   decider: Decider;
@@ -23,6 +25,8 @@ export interface CompanionOptions {
   defaultSession?: string;
   /** Extra origins allowed to open UI sockets (e.g. "chrome-extension://*"). */
   extraOrigins?: string[];
+  /** Streaming speech-to-text for /ws/stt; without one, UIs fall back to Web Speech. */
+  stt?: SttProvider | null;
 }
 
 export interface Companion {
@@ -36,7 +40,12 @@ export interface Companion {
 
 export function createCompanion(opts: CompanionOptions): Companion {
   const auth = createAuth(opts.token);
-  const hub = new Hub({ decider: opts.decider, screenshotIntervalMs: opts.screenshotIntervalMs ?? 700, defaultSession: opts.defaultSession });
+  const hub = new Hub({
+    decider: opts.decider,
+    screenshotIntervalMs: opts.screenshotIntervalMs ?? 700,
+    defaultSession: opts.defaultSession,
+    sttProvider: opts.stt?.name ?? null,
+  });
 
   const app = express();
   if (opts.clientDir) {
@@ -53,7 +62,13 @@ export function createCompanion(opts: CompanionOptions): Companion {
   app.use("/api", createApi({ hub, auth, decider: opts.decider }));
 
   const wss = new WebSocketServer({ noServer: true });
+  const sttWss = new WebSocketServer({ noServer: true });
   let origins = allowedOrigins(0, opts.extraOrigins);
+
+  sttWss.on("connection", (ws: WebSocket) => {
+    if (!opts.stt) return ws.close(1013, "no speech-to-text provider configured");
+    attachSttRelay(ws, { provider: opts.stt });
+  });
 
   wss.on("connection", (ws: WebSocket) => {
     const defaultId = hub.defaultId;
@@ -98,12 +113,14 @@ export function createCompanion(opts: CompanionOptions): Companion {
   const makeServer = () => {
     const server = http.createServer(app);
     server.on("upgrade", (req, socket, head) => {
-      if (req.url?.split("?")[0] !== "/ws") return socket.destroy();
+      const pathname = req.url?.split("?")[0];
+      const target = pathname === "/ws" ? wss : pathname === "/ws/stt" ? sttWss : null;
+      if (!target) return socket.destroy();
       if (!originAllowed(req.headers.origin, origins)) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         return socket.destroy();
       }
-      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+      target.handleUpgrade(req, socket, head, (ws) => target.emit("connection", ws, req));
     });
     return server;
   };
@@ -139,6 +156,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
     },
     async close() {
       for (const ws of wss.clients) ws.terminate();
+      for (const ws of sttWss.clients) ws.terminate();
       await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
       await hub.close();
     },

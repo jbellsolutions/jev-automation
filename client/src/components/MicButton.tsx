@@ -1,15 +1,17 @@
-import type { useSpeechRecognition } from "../hooks/useSpeechRecognition.ts";
-
-type Speech = ReturnType<typeof useSpeechRecognition>;
+import type { Voice } from "../hooks/voice.ts";
 
 const NOTES: Record<string, string> = {
-  unsupported: "This browser has no Web Speech API. Use Chrome or Edge for voice; the text box below still works.",
+  unsupported: "This browser cannot capture voice here. Use Chrome or Edge (or the desktop app); the text box below still works.",
   insecure: "Microphone access requires a secure context. Open this page via http://localhost or https.",
+  "no-mic": "No microphone found.",
 };
 
-export function MicButton({ speech }: { speech: Speech }) {
+const PROVIDER_NAMES: Record<string, string> = { deepgram: "Deepgram", apple: "on-device" };
+
+export function MicButton({ speech }: { speech: Voice }) {
   const disabled = speech.availability !== "ok";
-  const label = speech.availability === "unsupported" ? "Voice not supported here" : speech.availability === "insecure" ? "Voice needs HTTPS or localhost" : speech.listening ? "Listening… speak a command" : "Tap to start listening";
+  const engine = speech.engine === "streaming" ? (speech.provider ? (PROVIDER_NAMES[speech.provider] ?? speech.provider) : "streaming") : "browser speech";
+  const label = speech.availability === "unsupported" ? "Voice not supported here" : speech.availability === "insecure" ? "Voice needs HTTPS or localhost" : speech.listening ? `Listening (${engine})… speak a command` : `Tap to start listening · ${engine}`;
   const note = NOTES[speech.availability] ?? speech.error;
   return (
     <>

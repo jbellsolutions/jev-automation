@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import { ClarifyCard } from "./components/ClarifyCard.tsx";
 import { CommandInput } from "./components/CommandInput.tsx";
 import { ConfirmCard } from "./components/ConfirmCard.tsx";
@@ -8,12 +8,14 @@ import { LiveView } from "./components/LiveView.tsx";
 import { MicButton } from "./components/MicButton.tsx";
 import { TopBar } from "./components/TopBar.tsx";
 import { useSocket } from "./hooks/useSocket.ts";
-import { useSpeechRecognition } from "./hooks/useSpeechRecognition.ts";
+import { useVoice } from "./hooks/useVoice.ts";
 import { initialState, reducer } from "./state.ts";
+import { detectTransport } from "./transport.ts";
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const send = useSocket(dispatch, (connected) => dispatch({ type: "socket", connected }));
+  const transport = useMemo(() => detectTransport(), []);
+  const send = useSocket(transport, dispatch, (connected) => dispatch({ type: "socket", connected }));
 
   const command = useCallback(
     (text: string, via: "voice" | "text") => {
@@ -22,7 +24,7 @@ export function App() {
     },
     [send],
   );
-  const speech = useSpeechRecognition((text) => command(text, "voice"));
+  const speech = useVoice({ transport, sttProvider: state.stt, muted: state.speaking, onUtterance: (text) => command(text, "voice") });
 
   return (
     <>

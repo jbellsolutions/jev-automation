@@ -29,7 +29,9 @@ export interface DecisionSummary {
 
 /** WebSocket messages, server -> browser UI. */
 export type ServerMessage =
-  | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number } }
+  | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number }; stt: { provider: string | null } }
+  /** The assistant is talking (or stopped); UIs mute the microphone meanwhile so it does not hear itself. */
+  | { type: "speaking"; active: boolean }
   | { type: "screenshot"; jpegBase64: string; url: string; title: string }
   | { type: "viewport"; width: number; height: number }
   | { type: "status"; text: string; level: "info" | "busy" | "ok" | "warn" | "error" }
@@ -43,6 +45,22 @@ export type ServerMessage =
   | { type: "steps"; original: string; commands: string[] }
   /** Outcome check for the step acknowledged with `stepId`. */
   | { type: "verify"; stepId: number; command: string; verify: VerifySummary };
+
+/** Messages on the /ws/stt socket, UI -> server. Audio travels as binary frames between
+ *  `start` and `stop`: little-endian 16-bit PCM at `sampleRate`, mono. */
+export type SttClientMessage =
+  | { type: "start"; sampleRate: number; encoding: "pcm_s16le"; channels: 1; lang?: string; keywords?: string[] }
+  | { type: "stop" };
+
+/** Messages on the /ws/stt socket, server -> UI. */
+export type SttServerMessage =
+  | { type: "ready"; provider: string }
+  /** Live text for display; never acted on. */
+  | { type: "transcript"; text: string; final: false }
+  /** A complete utterance: the UI sends it as a command. */
+  | { type: "utterance"; text: string }
+  | { type: "error"; message: string }
+  | { type: "closed" };
 
 export interface VerifySummary {
   done: boolean;

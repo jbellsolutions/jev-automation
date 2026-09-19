@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.jev.speech</string>
+  <key>CFBundleName</key>
+  <string>jev-speech</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Jev transcribes what you say to it, on this Mac, so it can carry out your voice commands.</string>
+</dict>
+</plist>

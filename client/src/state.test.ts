@@ -11,9 +11,11 @@ const decision: DecisionSummary = {
 
 describe("reducer", () => {
   it("tracks connection and hello", () => {
-    const s = run([{ type: "socket", connected: true }, { type: "hello", jev: { enabled: true, model: "jev-latest" }, viewport: { width: 1000, height: 600 } }]);
+    const s = run([{ type: "socket", connected: true }, { type: "hello", jev: { enabled: true, model: "jev-latest" }, viewport: { width: 1000, height: 600 }, stt: { provider: "deepgram" } }]);
     expect(s.connected).toBe(true);
     expect(s.jev?.model).toBe("jev-latest");
+    expect(s.stt).toBe("deepgram");
+    expect(reducer(s, { type: "speaking", active: true }).speaking).toBe(true);
     expect(s.viewport).toEqual({ width: 1000, height: 600 });
   });
 
