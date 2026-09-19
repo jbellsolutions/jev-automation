@@ -43,7 +43,20 @@ export function allowedOrigins(port: number, extra: string[] = []): Set<string> 
 }
 
 export function originAllowed(origin: string | undefined, allowed: Set<string>): boolean {
-  if (origin === undefined) return true; // non-browser clients: they must present the token in their first frame
+  if (origin === undefined) return true; // non-browser clients: socketAllowed() makes them present the token
   if (allowed.has(origin)) return true;
   return origin.startsWith("chrome-extension://") && allowed.has("chrome-extension://*");
+}
+
+/** May this upgrade request open a socket? Browser pages are judged by Origin; anything that
+ *  sends no Origin (a local process) must carry the bearer token — as a header or `?token=` —
+ *  whenever one is configured. */
+export function socketAllowed(req: { url?: string; headers: { origin?: string; authorization?: string } }, auth: Auth, allowed: Set<string>): boolean {
+  const origin = req.headers.origin;
+  if (origin !== undefined) return originAllowed(origin, allowed);
+  if (!auth.configured) return true;
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
+  if (m && auth.check(m[1])) return true;
+  const query = new URL(req.url ?? "/", "http://x").searchParams.get("token");
+  return auth.check(query);
 }

@@ -93,9 +93,12 @@ describe("HTTP API", () => {
 });
 
 describe("WebSocket origin check", () => {
-  const open = (port: number, origin?: string) =>
+  const open = (port: number, origin?: string, token?: string) =>
     new Promise<{ ok: boolean; first?: unknown }>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, origin ? { headers: { origin } } : {});
+      const headers: Record<string, string> = {};
+      if (origin) headers.origin = origin;
+      if (token) headers.authorization = `Bearer ${token}`;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers });
       ws.once("message", (data) => {
         resolve({ ok: true, first: JSON.parse(String(data)) });
         ws.close();
@@ -104,11 +107,18 @@ describe("WebSocket origin check", () => {
       ws.once("unexpected-response", () => resolve({ ok: false }));
     });
 
-  it("accepts the companion's own origin and non-browser clients, rejects strangers", async () => {
+  it("accepts the companion's own origin, rejects strangers, and makes non-browser clients present the token", async () => {
     const { port } = await boot();
     expect((await open(port, `http://localhost:${port}`)).first).toMatchObject({ type: "hello" });
-    expect((await open(port)).ok).toBe(true);
     expect((await open(port, "https://evil.example")).ok).toBe(false);
+    expect((await open(port)).ok).toBe(false);
+    expect((await open(port, undefined, "wrong")).ok).toBe(false);
+    expect((await open(port, undefined, TOKEN)).ok).toBe(true);
+  });
+
+  it("lets non-browser clients in without a token only when none is configured", async () => {
+    const { port } = await boot({ token: undefined });
+    expect((await open(port)).ok).toBe(true);
   });
 
   it("listens on IPv6 loopback too when available", async () => {

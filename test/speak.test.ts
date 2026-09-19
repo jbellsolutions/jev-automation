@@ -86,6 +86,19 @@ describe("Session speech", () => {
     expect(messages.at(-1)).toEqual({ type: "speaking", active: false });
   });
 
+  it("waits for the outcome check before speaking, so a stuck click is reported aloud", async () => {
+    const executor = new FakeExecutor([el("e0", { tag: "button", text: "Next" })]);
+    executor.clickChangesPage = false;
+    const speaker = new FakeSpeaker();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), speaker });
+    const r = await session.command("click next", { speak: true });
+    expect(r.steps[0]!.verify?.stuck).toBe(true);
+    expect(speaker.spoken).toEqual(["did click, but it looks stuck: stuck: no change"]);
+    // typed commands keep verifying in the background
+    const r2 = await session.command("click next");
+    expect(r2.steps[0]!.verify).toBeUndefined();
+  });
+
   it("speaks the confirmation question and stops talking on cancel", async () => {
     const { session, speaker } = make();
     await session.command("click delete account", { speak: true });

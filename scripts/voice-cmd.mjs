@@ -2,7 +2,8 @@
  *  messages that follow (including the spoken reply). Usage: node scripts/voice-cmd.mjs "open wikipedia" */
 import { WebSocket } from "ws";
 
-const ws = new WebSocket("ws://127.0.0.1:3000/ws");
+const port = process.env.PORT ?? 3000;
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: process.env.JEV_TOKEN ? { authorization: `Bearer ${process.env.JEV_TOKEN}` } : {} });
 const text = process.argv[2] ?? "open wikipedia and search for cats";
 const t0 = Date.now();
 ws.on("open", () => ws.send(JSON.stringify({ type: "command", text, via: "voice" })));

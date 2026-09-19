@@ -134,7 +134,20 @@ export class Session {
   /** A spoken or typed command. Resolves when the command has been acted on or has left a
    *  question open; never rejects. With `speak`, the outcome is also read aloud. */
   command(text: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.enqueue(() => this.handleCommand(text)), opts.speak);
+    return this.voiced(this.enqueue(() => this.withAwaitedVerify(!!opts.speak, () => this.handleCommand(text))), opts.speak);
+  }
+
+  /** Set while a task runs whose caller needs the outcome check in the result (a voice user
+   *  is waiting to hear it), so single commands verify before resolving instead of in the background. */
+  private awaitVerify = false;
+  private async withAwaitedVerify<T>(on: boolean, task: () => Promise<T>): Promise<T> {
+    const prev = this.awaitVerify;
+    this.awaitVerify = on;
+    try {
+      return await task();
+    } finally {
+      this.awaitVerify = prev;
+    }
   }
 
   private voiced(result: Promise<CommandResult>, speak: boolean | undefined): Promise<CommandResult> {
@@ -163,11 +176,11 @@ export class Session {
 
   /** Answer to a pending confirmation from a UI control (as opposed to a spoken reply). */
   reply(ok: boolean, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.replyInner(ok), opts.speak);
+    return this.voiced(this.replyInner(ok, !!opts.speak), opts.speak);
   }
 
-  private replyInner(ok: boolean): Promise<CommandResult> {
-    return this.enqueue(async () => {
+  private replyInner(ok: boolean, awaitVerify: boolean): Promise<CommandResult> {
+    return this.enqueue(() => this.withAwaitedVerify(awaitVerify, async () => {
       const pending = this.pending?.kind === "confirm" ? this.pending : null;
       const rest = this.takeContinuation();
       this.pending = null;
@@ -179,16 +192,16 @@ export class Session {
       }
       await this.runHeld(step, pending.action, pending.before, rest !== null);
       return this.resume([step], rest);
-    });
+    }));
   }
 
   /** A clarification option chosen from a UI control. */
   pick(elementId: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.pickInner(elementId), opts.speak);
+    return this.voiced(this.pickInner(elementId, !!opts.speak), opts.speak);
   }
 
-  private pickInner(elementId: string): Promise<CommandResult> {
-    return this.enqueue(async () => {
+  private pickInner(elementId: string, awaitVerify: boolean): Promise<CommandResult> {
+    return this.enqueue(() => this.withAwaitedVerify(awaitVerify, async () => {
       const pending = this.pending?.kind === "clarify" ? this.pending : null;
       const opt = pending?.decision.clarify?.options.find((o) => o.elementId === elementId);
       const rest = this.takeContinuation();
@@ -197,7 +210,7 @@ export class Session {
       if (!pending || !opt) return this.finish([step]);
       await this.runHeld(step, { kind: "click", elementId: opt.elementId, label: opt.label }, pending.before, rest !== null);
       return this.resume([step], rest);
-    });
+    }));
   }
 
   /** Click on the live view; fx/fy are fractions of the frame. */
@@ -286,7 +299,8 @@ export class Session {
   }
 
   /** Run an action that was waiting on a question, then check it like any other step. */
-  private async runHeld(step: StepResult, action: Action, before: PageSnapshot, blocking: boolean): Promise<void> {
+  private async runHeld(step: StepResult, action: Action, before: PageSnapshot, inSequence: boolean): Promise<void> {
+    const blocking = inSequence || this.awaitVerify;
     const outcome = await this.runAction(action);
     step.result = { text: outcome.text, level: outcome.level };
     if (blocking) await this.verifyStep(step, action, before, outcome.error);
@@ -347,7 +361,7 @@ export class Session {
     for (let i = from; i < total; i++) {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
-      const step = await this.runStep(this.ack(command, info), total > 1 ? "blocking" : "async");
+      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async");
       steps.push(step);
       if (step.verify?.stuck) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");

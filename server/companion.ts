@@ -10,7 +10,7 @@ import type { Decider } from "../core/decide.js";
 import type { Executor } from "../core/executor.js";
 import type { Speaker } from "../core/speak.js";
 import type { ClientMessage } from "../core/protocol.js";
-import { type Auth, allowedOrigins, createAuth, originAllowed } from "./auth.js";
+import { type Auth, allowedOrigins, createAuth, socketAllowed } from "./auth.js";
 import { demoPage } from "./demo.js";
 import { createApi } from "./http.js";
 import { Hub } from "./hub.js";
@@ -120,7 +120,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
       const pathname = req.url?.split("?")[0];
       const target = pathname === "/ws" ? wss : pathname === "/ws/stt" ? sttWss : null;
       if (!target) return socket.destroy();
-      if (!originAllowed(req.headers.origin, origins)) {
+      if (!socketAllowed(req, auth, origins)) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         return socket.destroy();
       }
