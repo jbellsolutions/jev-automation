@@ -6,6 +6,7 @@ import { BrowserWindow, Menu, Tray, app, globalShortcut, ipcMain, nativeImage, s
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "../server/companion.js";
 import { selectComputer } from "../server/computer.js";
+import { loadEnvFile } from "../server/env.js";
 import { createBrain } from "../server/hermes.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { selectSpeaker } from "../server/speak/say.js";
@@ -15,6 +16,8 @@ import { trayIconPng } from "./tray-icon.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/app
 const root = path.join(here, "..", "..");
+// The app is launched from the Dock / at login with no shell around it: read the project's .env itself.
+const envKeys = loadEnvFile(path.join(root, ".env"));
 const PORT = Number(process.env.JEV_APP_PORT ?? 3111);
 const HOTKEY = process.env.JEV_HOTKEY ?? "Alt+Space";
 const PANEL = { width: 440, height: 720 };
@@ -204,7 +207,7 @@ async function main() {
     console.error(`Could not register the ${HOTKEY} hotkey; use the tray menu.`);
   }
   showPanel();
-  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice in: ${stt?.name ?? "web speech"}  out: ${speaker ? "say" : "off"}`);
+  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice in: ${stt?.name ?? "web speech"}  out: ${speaker ? "say" : "off"}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
 
   app.on("before-quit", () => {
     quitting = true;
