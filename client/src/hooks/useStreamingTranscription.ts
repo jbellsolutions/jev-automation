@@ -43,6 +43,7 @@ export function useStreamingTranscription(opts: StreamingOptions) {
         : "ok";
 
   const teardown = useCallback(() => {
+    if (captureRef.current || wsRef.current) console.log("[voice] capture torn down");
     const c = captureRef.current;
     captureRef.current = null;
     if (c) {
@@ -110,8 +111,11 @@ export function useStreamingTranscription(opts: StreamingOptions) {
     setListening(true);
 
     node.port.onmessage = (ev: MessageEvent<Float32Array>) => {
-      if (ws.readyState !== WebSocket.OPEN || optsRef.current.muted) return;
-      const pcm = floatTo16BitPCM(resample(ev.data, ctx.sampleRate, TARGET_RATE));
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const samples = resample(ev.data, ctx.sampleRate, TARGET_RATE);
+      // while the assistant talks, send silence rather than nothing: the endpointers only
+      // close an utterance when they *receive* quiet audio
+      const pcm = optsRef.current.muted ? new Int16Array(samples.length) : floatTo16BitPCM(samples);
       for (const frame of framer.push(pcm)) ws.send(frame.buffer);
     };
     ws.onopen = () => {
@@ -147,12 +151,14 @@ export function useStreamingTranscription(opts: StreamingOptions) {
           setError(msg.message);
           break;
         case "closed":
+          console.log("[voice] relay reported the provider stream closed");
           if (wsRef.current === ws) teardown();
           break;
       }
     };
     ws.onclose = (ev) => {
       if (wsRef.current !== ws) return;
+      console.log(`[voice] relay socket closed (${ev.code}${ev.reason ? ` ${ev.reason}` : ""})`);
       if (ev.code === 1013) setError("The server has no speech-to-text provider configured.");
       else if (captureRef.current) setError("Transcription connection closed.");
       teardown();

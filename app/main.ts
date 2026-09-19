@@ -157,10 +157,18 @@ async function main() {
   void playwright.start();
 
   // Only our own renderer gets the microphone.
-  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
-    callback(permission === "media" && wc.getURL().startsWith(baseUrl));
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => permission === "media" && origin.startsWith(baseUrl));
+  if (!process.env.JEV_DEBUG_NO_PERM) {
+    session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+      const ok = permission === "media" && wc.getURL().startsWith(baseUrl);
+      console.log(`permission request: ${permission} ${JSON.stringify(details)} → ${ok}`);
+      callback(ok);
+    });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => {
+      const ok = permission === "media" && origin.startsWith(baseUrl);
+      console.log(`permission check: ${permission} ${origin} → ${ok}`);
+      return ok;
+    });
+  }
 
   win = createWindow();
   tray = new Tray(icon("idle"));
@@ -200,6 +208,7 @@ async function main() {
 app.on("window-all-closed", () => {
   /* stay in the tray */
 });
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => app.quit());
 
 main().catch((err) => {
   console.error(err instanceof Error ? err.stack ?? err.message : err);

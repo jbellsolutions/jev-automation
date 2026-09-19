@@ -48,7 +48,10 @@ export function App() {
     if (desktop) window.jev?.setListening?.(speech.listening);
   }, [desktop, speech.listening]);
   useEffect(() => {
-    if (desktop && window.jev?.autoListen && state.jev && !speech.listening) speech.start();
+    if (desktop && window.jev?.autoListen && state.jev && !speech.listening) {
+      console.log("[voice] auto-listen: starting");
+      speech.start();
+    }
     // once, when the companion has said hello
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desktop, state.jev !== null]);

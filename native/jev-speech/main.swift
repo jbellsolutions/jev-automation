@@ -22,6 +22,13 @@ import Speech
 @_silgen_name("responsibility_spawnattrs_setdisclaim")
 private func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
 
+// If whoever spawned us dies without cleaning up (a crashed or SIGKILLed companion), leave
+// rather than linger as an orphan holding the recognizer and, worse, a permission prompt.
+let watchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
+watchdog.schedule(deadline: .now() + 1, repeating: 1)
+watchdog.setEventHandler { if getppid() == 1 { kill(0, SIGTERM); exit(0) } }
+watchdog.resume()
+
 if ProcessInfo.processInfo.environment["JEV_SPEECH_DISCLAIMED"] == nil {
     var attrs: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attrs)
@@ -50,6 +57,10 @@ let silenceMs = 700.0
 let maxUtteranceMs = 30_000.0
 let energyGate: Float = 0.012 // RMS of int16/32768 samples; room noise sits well below this
 
+let debug = ProcessInfo.processInfo.environment["JEV_SPEECH_DEBUG"] != nil
+func trace(_ msg: String) {
+    if debug { FileHandle.standardError.write("[jev-speech] \(msg)\n".data(using: .utf8)!) }
+}
 let out = FileHandle.standardOutput
 let outQueue = DispatchQueue(label: "jev-speech.out")
 func emit(_ obj: [String: Any]) {
@@ -99,6 +110,13 @@ final class Utterance {
 let queue = DispatchQueue(label: "jev-speech.state")
 var current: Utterance? = nil
 var stdinClosed = false
+/// Requests that have had endAudio() but not yet delivered (or been forced to) their final.
+var draining = 0
+
+/// After EOF: leave once nothing is still draining.
+func exitIfDone() {
+    if stdinClosed && draining == 0 { exit(0) }
+}
 
 func startUtterance() {
     let u = Utterance()
@@ -119,6 +137,7 @@ func startUtterance() {
                 }
             }
             if let error = error as NSError? {
+                trace("error \(error.domain) \(error.code) \(error.localizedDescription)")
                 // Ending a request with no speech in it reports "no speech detected" — that is not an error for us.
                 if !u.finished {
                     if u.ended || error.code == 1110 || error.code == 216 { finish(u, text: u.lastText) }
@@ -130,25 +149,28 @@ func startUtterance() {
 }
 
 func finish(_ u: Utterance, text: String) {
+    trace("finish finished=\(u.finished) ended=\(u.ended) text=\(text) isCurrent=\(current === u) stdinClosed=\(stdinClosed)")
     if u.finished { return }
     u.finished = true
+    if u.ended { draining -= 1 }
     u.task?.cancel()
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if !t.isEmpty { emit(["type": "transcript", "text": t, "final": true]) }
     if current === u {
         current = nil
         if !stdinClosed { startUtterance() }
-        else { exit(0) }
     }
+    exitIfDone()
 }
 
 func endUtterance(_ u: Utterance) {
     if u.ended { return }
     u.ended = true
+    draining += 1
     u.request.endAudio()
     // Recognizers sometimes never deliver the final for a request that ended on silence; don't wait forever.
     queue.asyncAfter(deadline: .now() + 2.5) { if !u.finished { finish(u, text: u.lastText) } }
-    if u.lastSpeechAt != nil { startUtterance() } // route new audio to a fresh request straight away
+    if current === u && !stdinClosed { startUtterance() } // route new audio to a fresh request straight away
 }
 
 func rms(_ samples: UnsafeBufferPointer<Int16>) -> Float {
@@ -178,9 +200,7 @@ func feed(_ chunk: Data) {
             if quietMs >= silenceMs || ageMs >= maxUtteranceMs { endUtterance(u) }
         } else if now.timeIntervalSince(u.startedAt) > 55 {
             // nothing said for almost a minute: recycle the request before the recognizer times it out
-            u.request.endAudio()
-            u.ended = true
-            startUtterance()
+            endUtterance(u)
         }
     }
 }
@@ -204,10 +224,9 @@ let reader = Thread {
     if !pending.isEmpty { feed(pending) }
     queue.sync {
         stdinClosed = true
-        if let u = current {
-            if u.lastSpeechAt == nil { exit(0) }
-            endUtterance(u)
-        } else { exit(0) }
+        trace("EOF current=\(current == nil ? "nil" : "u") lastSpeechAt=\(String(describing: current?.lastSpeechAt)) ended=\(current?.ended ?? false) lastText=\(current?.lastText ?? "")")
+        if let u = current, u.lastSpeechAt != nil { endUtterance(u) }
+        exitIfDone()
     }
     queue.asyncAfter(deadline: .now() + 3) { exit(0) }
 }
