@@ -5,11 +5,11 @@
 import { type Action, describeAction } from "./actions.js";
 import { type ApprovalChoice, type Brain, type BrainRun, approvalChoice } from "./brain.js";
 import { parseOrdinal, splitSteps } from "./commands.js";
-import { isStopWord } from "./route.js";
+import { isResetCommand, isStopWord } from "./route.js";
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
-import { type Speaker, clipSpoken, spokenSummary } from "./speak.js";
+import { MAX_SPOKEN, type Speaker, clipSpoken, spokenPart, spokenSummary } from "./speak.js";
 import type { DecisionSummary, ServerMessage, StepInfo, VerifySummary } from "./protocol.js";
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
 import { type VerifyResult, describeVerify } from "./verify.js";
@@ -37,9 +37,22 @@ interface BrainState {
   id: string;
   stepId: number;
   voice: boolean;
+  /** What was sent, for a retry. */
+  text: string;
+  /** 1 = first run for this utterance; a model error re-sends up to MAX_ATTEMPTS times. */
+  attempt: number;
+  /** Tools the run has started, in order: once one has, a failed run is not re-sent. */
+  tools: string[];
   done: Promise<BrainOutcome>;
   resolve: (o: BrainOutcome) => void;
 }
+
+/** A run that fails with a model-provider error before any tool ran is re-sent: once on the
+ *  same conversation (the provider's errors are mostly transient), then once on a fresh one. */
+const MAX_ATTEMPTS = 3;
+/** Model failures in a row before the conversation is rotated (its history is then suspect). */
+const ROTATE_AFTER_MODEL_FAILURES = 2;
+const RETRY_DELAY_MS = 1500;
 
 export interface BrainOutcome {
   ok: boolean;
@@ -73,6 +86,8 @@ export interface SessionDeps {
    *  action Jev also decided, or to a warning. */
   brain?: Brain | null;
   computer?: Computer | null;
+  /** Pause before re-sending a failed brain run (tests shorten it). */
+  retryDelayMs?: number;
 }
 
 export function summarize(d: Decision): DecisionSummary {
@@ -101,6 +116,8 @@ export class Session {
   approval: ApprovalPending | null = null;
   private continuation: Continuation | null = null;
   private brain: BrainState | null = null;
+  /** Consecutive brain runs that ended in a model error; reset by any other outcome. */
+  private modelFailures = 0;
   private nextStepId = 1;
   private queue: Promise<unknown> = Promise.resolve();
   private inFlight: AbortController | null = null;
@@ -216,7 +233,7 @@ export class Session {
     const r = await this.command(text, opts);
     const run = this.brain;
     const started = r.steps.find((s) => run && s.stepId === run.stepId);
-    if (!run || !started) return { ...r, output: spokenSummary(r) };
+    if (!run || !started) return { ...r, output: spokenSummary(r, this.maxSpoken) };
     const outcome = await run.done;
     return { ...r, ok: r.ok && outcome.ok, output: outcome.output };
   }
@@ -238,9 +255,14 @@ export class Session {
   private voiced(result: Promise<CommandResult>, speak: boolean | undefined): Promise<CommandResult> {
     if (!speak || !this.deps.speaker) return result;
     return result.then((r) => {
-      this.say(spokenSummary(r));
+      this.say(spokenSummary(r, this.maxSpoken));
       return r;
     });
+  }
+
+  /** How much of an answer is read aloud: the voice decides (a robotic voice earns a shorter cut). */
+  private get maxSpoken(): number {
+    return this.deps.speaker?.maxChars ?? MAX_SPOKEN;
   }
 
   private speakingRun = 0;
@@ -439,6 +461,8 @@ export class Session {
     // "stop" always wins: it halts the brain run outright rather than answering a question
     if (isStopWord(trimmed)) this.stopBrain();
 
+    if (this.brainFor && isResetCommand(trimmed)) return this.finish([await this.resetBrain(trimmed)]);
+
     if (this.approval && !this.pending && this.brainFor && !isStopWord(trimmed)) {
       // a yes/no answers the agent; anything else is a new command and the request stays open
       const pending = this.approval;
@@ -499,7 +523,7 @@ export class Session {
   /** Browser steps run one at a time on the fast lane; everything else is handled whole. */
   private fastLane(d: Decision): boolean {
     if (d.route === "stop" || d.route === "computer") return false;
-    if (d.route === "hermes") return !this.brainFor;
+    if (d.route === "hermes" || d.route === "unclear") return !this.brainFor;
     return true;
   }
 
@@ -575,7 +599,8 @@ export class Session {
       step.result = this.report("Stopped", "ok");
       return step;
     }
-    if (decision.route === "hermes" && this.brainFor) return this.runBrain(step, said);
+    // with a brain there are no dead ends: half-heard fragments go to it too, it can ask back
+    if ((decision.route === "hermes" || decision.route === "unclear") && this.brainFor) return this.runBrain(step, said);
     if (decision.action.kind === "open_app") {
       if (!this.deps.computer) {
         if (this.brainFor) return this.runBrain(step, said);
@@ -622,6 +647,23 @@ export class Session {
     return `Hermes wants to ${summary}. Allow it?`;
   }
 
+  /** "new conversation": stop what the brain is doing and give it a clean thread. */
+  private async resetBrain(text: string): Promise<StepResult> {
+    const brain = this.deps.brain!;
+    const step = this.ack(text);
+    this.stopBrain();
+    this.modelFailures = 0;
+    try {
+      await brain.reset();
+      step.lane = "brain";
+      step.result = this.report(`${brain.name}: fresh conversation`, "ok");
+      if (this.awaitVerify) this.say("Okay, fresh start.");
+    } catch (err) {
+      step.result = this.report(`Couldn't reset ${brain.name}: ${errMsg(err)}`, "error");
+    }
+    return step;
+  }
+
   /** Hand the utterance to the brain. The step resolves as soon as the run is admitted (or
    *  steered into the run already in progress); events stream in afterwards, outside the queue. */
   private async runBrain(step: StepResult, text: string): Promise<StepResult> {
@@ -649,12 +691,45 @@ export class Session {
     }
     let resolve!: (o: BrainOutcome) => void;
     const done = new Promise<BrainOutcome>((r) => (resolve = r));
-    const state: BrainState = { id: run.id, stepId: step.stepId, voice, done, resolve };
+    const state: BrainState = { id: run.id, stepId: step.stepId, voice, text, attempt: 1, tools: [], done, resolve };
     this.brain = state;
     void this.consumeBrain(run, state);
     step.lane = "brain";
     step.result = this.report(`${brain.name} is on it`, "ok");
     return step;
+  }
+
+  /** A model-provider error on a run that had not started any tool: send the same utterance
+   *  again — same conversation first, a fresh one after that — with the outcome still owed to
+   *  the original step. Returns false when the run is to be given up on. */
+  private async retryBrain(state: BrainState, error: string): Promise<boolean> {
+    const brain = this.deps.brain;
+    if (!brain || state.tools.length || state.attempt >= MAX_ATTEMPTS || this.stopping.has(state.id)) return false;
+    const fresh = state.attempt >= 2 || this.modelFailures >= ROTATE_AFTER_MODEL_FAILURES;
+    this.report(`${brain.name}'s model errored (${error}); trying again${fresh ? " in a fresh conversation" : ""}`, "warn");
+    await new Promise((r) => setTimeout(r, this.deps.retryDelayMs ?? RETRY_DELAY_MS));
+    if (this.stopping.has(state.id) || this.brain !== state) return false;
+    let run: BrainRun;
+    try {
+      run = await brain.send(state.text, { fresh });
+    } catch (err) {
+      this.report(`${brain.name} unreachable: ${errMsg(err)}`, "error");
+      return false;
+    }
+    if (fresh) this.modelFailures = 0;
+    const next: BrainState = { ...state, id: run.id, attempt: state.attempt + 1, tools: [] };
+    this.brain = next;
+    this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event: { kind: "retrying", attempt: next.attempt, fresh } });
+    void this.consumeBrain(run, next);
+    return true;
+  }
+
+  /** What to say when a run's model gave up for good. */
+  private modelFailureLine(name: string, state: BrainState, rotated: boolean): string {
+    if (state.attempt > 1) return `${name}'s model keeps erroring, even in a fresh conversation. Give it a moment and say it again.`;
+    const after = state.tools.length ? ` after ${state.tools[state.tools.length - 1]!.replace(/_/g, " ")}` : "";
+    const tail = rotated ? " I've started a fresh conversation; say it again and I'll retry." : " Say it again and I'll retry.";
+    return `${name} hit an error from its model${after}.${tail}`;
   }
 
   /** Forward every run event to the UIs; questions and the answer are also spoken when the
@@ -666,11 +741,13 @@ export class Session {
       settled = true;
       state.resolve(o);
     };
+    let handedOver = false;
     try {
       for await (const event of run.events) {
         this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event });
         switch (event.kind) {
           case "tool_start":
+            state.tools.push(event.tool);
             this.report(`${name}: ${event.tool}…`, "busy");
             break;
           case "approval":
@@ -682,13 +759,34 @@ export class Session {
             if (this.approval?.runId === run.id) this.approval = null;
             break;
           case "completed":
+            this.modelFailures = 0;
             settle({ ok: true, output: event.output });
-            if (state.voice) this.say(clipSpoken(event.output));
+            if (state.voice) this.say(spokenPart(event.output, this.maxSpoken));
             break;
-          case "failed":
-            settle({ ok: false, output: event.error });
-            if (state.voice) this.say(clipSpoken(`${name} couldn't finish: ${event.error}`));
+          case "failed": {
+            if (!event.modelError) {
+              this.modelFailures = 0;
+              settle({ ok: false, output: event.error });
+              if (state.voice) this.say(clipSpoken(`${name} couldn't finish: ${event.error}`, this.maxSpoken));
+              break;
+            }
+            this.modelFailures++;
+            if (await this.retryBrain(state, event.error)) {
+              handedOver = true;
+              break;
+            }
+            // giving up on this utterance; a conversation that keeps failing is left behind
+            const rotate = this.modelFailures >= ROTATE_AFTER_MODEL_FAILURES && !!this.deps.brain;
+            if (rotate) {
+              this.modelFailures = 0;
+              await this.deps.brain!.reset().catch(() => {});
+            }
+            const line = this.modelFailureLine(name, state, rotate);
+            this.report(line, "error");
+            settle({ ok: false, output: line });
+            if (state.voice) this.say(clipSpoken(line, this.maxSpoken));
             break;
+          }
           case "cancelled":
             settle({ ok: false, output: "Cancelled" });
             break;
@@ -697,11 +795,13 @@ export class Session {
     } catch (err) {
       this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event: { kind: "failed", error: errMsg(err) } });
       settle({ ok: false, output: errMsg(err) });
-      if (state.voice) this.say(clipSpoken(`${name} dropped out: ${errMsg(err)}`));
+      if (state.voice) this.say(clipSpoken(`${name} dropped out: ${errMsg(err)}`, this.maxSpoken));
     } finally {
-      if (!settled) settle({ ok: false, output: "The run ended without an answer" });
+      if (!handedOver) {
+        if (!settled) settle({ ok: false, output: "The run ended without an answer" });
+        if (this.brain === state) this.brain = null;
+      }
       if (this.approval?.runId === run.id) this.approval = null;
-      if (this.brain === state) this.brain = null;
       this.stopping.delete(run.id);
     }
   }

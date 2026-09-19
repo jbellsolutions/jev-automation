@@ -22,6 +22,11 @@ describe("route: keyword mirror", () => {
     ["what's on my calendar today", "hermes"],
     ["what did I ask you yesterday on telegram", "hermes"],
     ["remind me to call mom at five", "hermes"],
+    ["yo can you hear me", "hermes"],
+    ["hey what's up", "hermes"],
+    ["can you check my email", "hermes"],
+    ["open slack and leave a note for xander in the content channel", "hermes"],
+    ["google the weather in paris", "browser_now"],
     ["stop", "stop"],
     ["never mind", "stop"],
   ])("%s → %s", (text, route) => {
@@ -72,10 +77,18 @@ describe("route: Jev answers", () => {
     expect(interpret("click pricing", answers("browser_now", 0.8, "click", 0.9))).toMatchObject({ route: "browser_now", action: { kind: "click", elementId: "e0" } });
   });
 
-  it("below the threshold a confident page verb stays in the browser lane, otherwise the brain", () => {
+  it("the brain is the default: an unsure route goes to it even with a confident page verb", () => {
     expect(THRESHOLDS.route).toBe(0.4);
-    expect(interpret("click pricing", answers("hermes", 0.3, "click", 0.9)).route).toBe("browser_now");
+    expect(THRESHOLDS.fastLane).toBe(0.6);
+    expect(interpret("click pricing", answers("hermes", 0.3, "click", 0.9)).route).toBe("hermes");
+    expect(interpret("click pricing", answers("browser_now", 0.5, "click", 0.9)).route).toBe("hermes");
+    expect(interpret("click pricing", answers("browser_now", 0.6, "click", 0.9)).route).toBe("browser_now");
     expect(interpret("tell me about pricing", answers("hermes", 0.3, "click", 0.4)).route).toBe("hermes");
+  });
+
+  it("the fast lanes need the confident browser intent too, the computer lane its own threshold", () => {
+    expect(interpret("click pricing", answers("browser_now", 0.9, "click", 0.5)).route).toBe("hermes");
+    expect(interpret("open slack", answers("computer", 0.5, "open_url", 0.5)).route).toBe("hermes");
   });
 
   it("a browser route without a browser intent is not actionable: brain", () => {
@@ -93,7 +106,8 @@ describe("route: Jev answers", () => {
   });
 
   it("reconcileRoute ignores unknown choices", () => {
-    expect(reconcileRoute({ choice: "bogus", confidence: 0.9 }, true, true).route).toBe("browser_now");
+    expect(reconcileRoute({ choice: "bogus", confidence: 0.9 }, true, true).route).toBe("hermes");
+    expect(reconcileRoute({ choice: "browser_now", confidence: 0.9 }, true, true).route).toBe("browser_now");
     expect(reconcileRoute(null, false, false).route).toBe("hermes");
     expect(Object.keys(ROUTES)).toEqual(["browser_now", "computer", "hermes", "stop", "unclear"]);
   });

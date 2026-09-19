@@ -16,7 +16,9 @@ import { detectTransport } from "./transport.ts";
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const transport = useMemo(() => detectTransport(), []);
-  const send = useSocket(transport, dispatch, (connected) => dispatch({ type: "socket", connected }));
+  const send = useSocket(transport, dispatch, (connected) =>
+    dispatch({ type: "socket", connected }),
+  );
 
   const command = useCallback(
     (text: string, via: "voice" | "text") => {
@@ -25,7 +27,15 @@ export function App() {
     },
     [send],
   );
-  const speech = useVoice({ transport, sttProvider: state.stt, muted: state.speaking, onUtterance: (text) => command(text, "voice") });
+  const speech = useVoice({
+    transport,
+    sttProvider: state.stt,
+    muted: state.speaking,
+    onUtterance: (text) => {
+      console.log(`[voice] heard: ${text}`);
+      command(text, "voice");
+    },
+  });
   const desktop = transport.mode === "desktop";
 
   // Desktop shell: the global hotkey drives the microphone, the tray mirrors its state, Escape hides the panel.
@@ -36,7 +46,8 @@ export function App() {
     const offToggle = bridge?.onToggleListening?.(() => speech.toggle());
     const offStop = bridge?.onStopListening?.(() => speech.stop());
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") (speech.listening ? speech.stop : bridge?.hide)?.();
+      if (e.key === "Escape")
+        (speech.listening ? speech.stop : bridge?.hide)?.();
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -60,14 +71,27 @@ export function App() {
     if (speech.error) console.error(`[voice] ${speech.error}`);
   }, [speech.error]);
   useEffect(() => {
-    if (speech.listening) console.log(`[voice] listening via ${speech.engine}${speech.provider ? ` (${speech.provider})` : ""}`);
+    if (speech.listening)
+      console.log(
+        `[voice] listening via ${speech.engine}${speech.provider ? ` (${speech.provider})` : ""}`,
+      );
   }, [speech.listening, speech.engine, speech.provider]);
 
   return (
     <>
-      <TopBar jev={state.jev} desktop={desktop} onHide={desktop ? () => window.jev?.hide?.() : undefined} />
+      <TopBar
+        jev={state.jev}
+        desktop={desktop}
+        onHide={desktop ? () => window.jev?.hide?.() : undefined}
+      />
       <main className={`layout${desktop ? " desktop" : ""}`}>
-        <LiveView page={state.page} status={state.status} connected={state.connected} send={send} fixedViewport={desktop ? { width: 1024, height: 640 } : undefined} />
+        <LiveView
+          page={state.page}
+          status={state.status}
+          connected={state.connected}
+          send={send}
+          fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
+        />
         <aside className="control-pane">
           <MicButton speech={speech} />
           <CommandInput onSubmit={(t) => command(t, "text")} />
@@ -98,7 +122,10 @@ export function App() {
               }}
             />
           )}
-          <DecisionLog entries={state.entries} onClear={() => dispatch({ type: "clear_log" })} />
+          <DecisionLog
+            entries={state.entries}
+            onClear={() => dispatch({ type: "clear_log" })}
+          />
           <Help />
         </aside>
       </main>

@@ -3,7 +3,7 @@ import { HeuristicDecider } from "../core/decide.js";
 import type { PageElement } from "../core/elements.js";
 import type { ServerMessage } from "../core/protocol.js";
 import { Session } from "../core/session.js";
-import { FakeBrain, tick } from "./helpers/fake-brain.js";
+import { FakeBrain, tick, waitFor } from "./helpers/fake-brain.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
 function make(elements: PageElement[] = []) {
@@ -334,6 +334,7 @@ describe("Session: brain lane (Hermes)", () => {
   class FakeSpeaker {
     said: string[] = [];
     stopped = 0;
+    maxChars?: number;
     async speak(text: string) { this.said.push(text); }
     stop() { this.stopped++; }
   }
@@ -344,7 +345,7 @@ describe("Session: brain lane (Hermes)", () => {
     const opened: string[] = [];
     const computer = opts.computer ? { openApp: async (app: string) => { opened.push(app); return `Opened ${app}`; } } : null;
     const messages: ServerMessage[] = [];
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, computer });
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, computer, retryDelayMs: 1 });
     session.subscribe((m) => messages.push(m));
     const brainEvents = () => messages.filter((m): m is Extract<ServerMessage, { type: "brain_event" }> => m.type === "brain_event").map((m) => m.event.kind);
     return { executor, brain, speaker, opened, session, messages, brainEvents };
@@ -452,6 +453,122 @@ describe("Session: brain lane (Hermes)", () => {
     expect(await q).toMatchObject({ ok: false, output: "model timeout" });
     const local = await session.ask("scroll down");
     expect(local.output).toBe("did scroll");
+  });
+
+  it("greetings and half-heard fragments go to the brain too: no dead ends", async () => {
+    const { session, brain, executor } = withBrain();
+    const r = await session.command("yo can you hear me");
+    expect(brain.sent).toEqual(["yo can you hear me"]);
+    expect(r.steps[0]!.decision).toMatchObject({ route: "hermes" });
+    brain.emit("run_1", { kind: "completed", output: "Loud and clear." }, null);
+    await tick();
+    // Jev itself may answer "unclear" for a fragment: with a brain that is a question for it, not a dead end
+    const unclear = new HeuristicDecider();
+    const decide = unclear.decide.bind(unclear);
+    unclear.decide = async (...args) => {
+      const d = await decide(...args);
+      if (d.command === "the the") Object.assign(d, { route: "unclear", intent: "unclear", action: { kind: "none", reason: "That didn't sound like it was for me" } });
+      return d;
+    };
+    const quiet = new Session("fake2", { executor, decider: unclear, brain });
+    const decided = await quiet.command("the the");
+    expect(decided.steps[0]!.decision?.route).toBe("unclear");
+    expect(decided.steps[0]!.result).toEqual({ text: "Hermes is on it", level: "ok" });
+    expect(brain.sent).toEqual(["yo can you hear me", "the the"]);
+    expect(executor.executed).toEqual([]);
+  });
+
+  it("'new conversation' resets the brain and says so", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    await session.command("what's on my calendar today", { speak: true });
+    const r = await session.command("start a new conversation", { speak: true });
+    expect(brain.stops).toEqual(["run_1"]);
+    expect(brain.resets).toBe(1);
+    expect(r.steps[0]!.result).toEqual({ text: "Hermes: fresh conversation", level: "ok" });
+    expect(speaker!.said.at(-1)).toBe("Okay, fresh start.");
+    expect(brain.sent).toEqual(["what's on my calendar today"]);
+  });
+
+  it("a model error before any tool ran is retried on the same conversation, then a fresh one", async () => {
+    const { session, brain, speaker, brainEvents } = withBrain({ speaker: true });
+    const asked = session.ask("what's the weather", { speak: true });
+    await tick();
+    brain.emit("run_1", { kind: "failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request", modelError: true }, null);
+    await waitFor(() => brain.sent.length === 2);
+    expect(brain.freshFlags).toEqual([false, false]);
+    brain.emit("run_2", { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
+    await waitFor(() => brain.sent.length === 3);
+    expect(brain.freshFlags).toEqual([false, false, true]);
+    expect(brain.resets).toBe(1);
+    brain.emit("run_3", { kind: "completed", output: "Sunny, 72." }, null);
+    const r = await asked;
+    expect(r).toMatchObject({ ok: true, output: "Sunny, 72." });
+    expect(brainEvents()).toEqual(["failed", "retrying", "failed", "retrying", "completed"]);
+    expect(speaker!.said).toEqual(["On it.", "Sunny, 72."]);
+  });
+
+  it("gives up after the third model error and says so", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    const asked = session.ask("what's the weather", { speak: true });
+    await tick();
+    for (const id of ["run_1", "run_2", "run_3"]) {
+      brain.emit(id, { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
+      if (id !== "run_3") await waitFor(() => brain.sent.length === Number(id.slice(-1)) + 1);
+    }
+    const r = await asked;
+    expect(r.ok).toBe(false);
+    expect(r.output).toBe("Hermes's model keeps erroring, even in a fresh conversation. Give it a moment and say it again.");
+    expect(brain.resets).toBe(1); // the fresh retry; the conversation is new already, no second rotation
+    expect(speaker!.said.at(-1)).toBe(r.output);
+  });
+
+  it("a model error after a tool ran is not re-sent; two in a row rotate the conversation", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    const first = session.ask("leave a note for xander in slack", { speak: true });
+    await tick();
+    brain.emit("run_1", { kind: "tool_start", tool: "jev_status", preview: "" }, { kind: "tool_end", tool: "jev_status", durationMs: 5, error: false });
+    brain.emit("run_1", { kind: "failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request", modelError: true }, null);
+    const r1 = await first;
+    expect(brain.sent).toHaveLength(1);
+    expect(r1.output).toBe("Hermes hit an error from its model after jev status. Say it again and I'll retry.");
+    expect(brain.resets).toBe(0);
+    expect(speaker!.said.at(-1)).toBe(r1.output);
+
+    const second = session.ask("check my email", { speak: true });
+    await tick();
+    brain.emit("run_2", { kind: "tool_start", tool: "jev_browse", preview: "" }, { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
+    const r2 = await second;
+    expect(r2.output).toBe("Hermes hit an error from its model after jev browse. I've started a fresh conversation; say it again and I'll retry.");
+    expect(brain.resets).toBe(1);
+
+    // an ordinary failure is not a model error: no retry, no rotation
+    const third = session.ask("and now", { speak: true });
+    await tick();
+    brain.emit("run_3", { kind: "failed", error: "model timeout" }, null);
+    expect((await third).output).toBe("model timeout");
+    expect(brain.resets).toBe(1);
+  });
+
+  it("stop during a retry pause abandons the retry", async () => {
+    const { session, brain } = withBrain();
+    const asked = session.ask("what's the weather");
+    await tick();
+    brain.emit("run_1", { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
+    await session.command("stop");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(brain.sent).toHaveLength(1);
+    expect((await asked).ok).toBe(false);
+  });
+
+  it("speaks the lead of a long answer, as much as the voice allows", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    speaker!.maxChars = 600;
+    await session.command("what's on my calendar today", { speak: true });
+    const lead = "You have two meetings today: standup at nine and lunch with Sam at noon.";
+    const detail = "- 9:00 standup\n- 12:00 lunch with Sam\n\nAnything else?";
+    brain.emit("run_1", { kind: "completed", output: `${lead}\n\n${detail}` }, null);
+    await tick();
+    expect(speaker!.said.at(-1)).toBe(lead);
   });
 
   it("an unreachable brain is an error, not a hang", async () => {

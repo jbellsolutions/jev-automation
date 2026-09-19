@@ -17,7 +17,11 @@ export type BrainEvent =
   | { kind: "approved"; choice: string }
   | { kind: "steered" }
   | { kind: "completed"; output: string }
-  | { kind: "failed"; error: string }
+  /** `modelError`: the agent's model provider rejected the request (4xx), not the task itself —
+   *  worth one retry, and a fresh conversation if it keeps happening. */
+  | { kind: "failed"; error: string; modelError?: boolean }
+  /** Emitted by the session, not the agent: the utterance was re-sent after a model error. */
+  | { kind: "retrying"; attempt: number; fresh: boolean }
   | { kind: "cancelled" };
 
 export type BrainTerminal = Extract<BrainEvent, { kind: "completed" | "failed" | "cancelled" }>;
@@ -31,12 +35,21 @@ export interface BrainRun {
 
 export interface Brain {
   readonly name: string;
-  /** Start a run for one utterance in the assistant's persistent conversation. */
-  send(text: string, opts?: { signal?: AbortSignal }): Promise<BrainRun>;
+  /** Start a run for one utterance in the assistant's persistent conversation. `fresh` starts
+   *  a new conversation first (the old one is left behind, not deleted). */
+  send(text: string, opts?: { signal?: AbortSignal; fresh?: boolean }): Promise<BrainRun>;
+  /** Begin a new conversation; the next send() starts from a clean thread. */
+  reset(): Promise<void>;
   approve(runId: string, choice: ApprovalChoice, requestId?: string | null): Promise<void>;
   /** Add to a run already in progress ("also check the second result"). */
   steer(runId: string, text: string): Promise<void>;
   stop(runId: string): Promise<void>;
+}
+
+/** Does a run failure look like the model provider rejecting the request (HTTP 4xx), as
+ *  opposed to the task failing? Those are worth a retry and, if persistent, a fresh thread. */
+export function isModelError(error: string): boolean {
+  return /\b4\d\d\b|bad request|invalid_request|context length|too many tokens|maximum context/i.test(error);
 }
 
 /** Map a spoken reply to a pending approval onto what the request allows. */

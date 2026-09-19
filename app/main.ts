@@ -57,7 +57,7 @@ function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
 
 function refreshTray() {
   tray?.setImage(icon(panel.listening ? "listening" : "idle"));
-  tray?.setToolTip(panel.listening ? "Jev — listening (⌥Space to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to talk`);
+  tray?.setToolTip(panel.listening ? "Jev — listening (⌥Space or Esc to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to talk`);
 }
 
 function placeBottomRight(w: BrowserWindow) {

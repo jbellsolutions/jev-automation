@@ -6,9 +6,11 @@ export interface Speaker {
   /** Say `text`, resolving when it has been spoken (or was interrupted). */
   speak(text: string, signal?: AbortSignal): Promise<void>;
   stop(): void;
+  /** How much of an answer is worth reading aloud with this voice (a robotic voice earns less). */
+  readonly maxChars?: number;
 }
 
-const MAX_SPOKEN = 160;
+export const MAX_SPOKEN = 160;
 
 /** URLs read aloud are noise: keep the host ("wikipedia.org"), drop scheme, path and query. */
 export function speakableText(text: string): string {
@@ -24,6 +26,20 @@ export function clipSpoken(text: string, max = MAX_SPOKEN): string {
   return t.length <= max ? t : `${t.slice(0, max - 1).replace(/\s+\S*$/, "")}…`;
 }
 
+/** The part of an answer to read aloud: the assistant is asked to lead with a short spoken
+ *  reply and put detail after a blank line, so the first paragraph is it when it fits; long
+ *  single paragraphs are cut at a sentence boundary instead of mid-word. */
+export function spokenPart(text: string, max = MAX_SPOKEN): string {
+  const plain = speakableText(text.replace(/[*_`#>]+/g, "").replace(/^\s*[-•]\s+/gm, ""));
+  const first = text.trim().split(/\r?\n\s*\r?\n/)[0] ?? "";
+  const lead = speakableText(first.replace(/[*_`#>]+/g, "").replace(/^\s*[-•]\s+/gm, ""));
+  const candidate = lead && lead.length <= max && lead.length >= Math.min(plain.length, 20) ? lead : plain;
+  if (candidate.length <= max) return candidate;
+  const cut = candidate.slice(0, max);
+  const boundary = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+  return boundary >= max / 3 ? cut.slice(0, boundary + 1) : clipSpoken(candidate, max);
+}
+
 const clip = clipSpoken;
 
 function lastResult(steps: StepResult[]): StepResult | undefined {
@@ -33,7 +49,8 @@ function lastResult(steps: StepResult[]): StepResult | undefined {
 
 /** What the assistant says after a command: the question it is now waiting on, otherwise the
  *  outcome of the last step that ran (prefixed with "Done" for multi-step successes). */
-export function spokenSummary(r: CommandResult): string {
+export function spokenSummary(r: CommandResult, max = MAX_SPOKEN): string {
+  const clip = (t: string) => clipSpoken(t, max);
   if (r.pending?.kind === "confirm") return clip(`${r.pending.actionLabel}? ${r.pending.reason}`);
   if (r.pending?.kind === "clarify") {
     const names = r.pending.options.slice(0, 4).map((o) => o.label);

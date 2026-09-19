@@ -11,7 +11,7 @@ import type { Action, ScrollDirection } from "./actions.js";
 import { describeAction } from "./actions.js";
 import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo } from "./commands.js";
 import { NONE_OPTION, type PageElement, type PageSnapshot, describeElement, elementCriteria } from "./elements.js";
-import { ROUTES, ROUTE_THRESHOLD, type Route, appRequest, reconcileRoute, routeHeuristically } from "./route.js";
+import { FAST_LANE_THRESHOLD, ROUTES, ROUTE_THRESHOLD, type Route, appRequest, reconcileRoute, routeHeuristically } from "./route.js";
 import { type VerifyInput, type VerifyResult, buildVerifyQuestions, buildVerifyState, heuristicVerdict, interpretVerifyAnswers, quickVerdict } from "./verify.js";
 
 export const INTENTS = {
@@ -86,10 +86,11 @@ export const THRESHOLDS = {
   risk: 0.6,
   /** Noul probability above which typed text is followed by Enter. */
   submit: 0.6,
-  /** Below this, the route answer is ignored: a confident page verb stays in the browser lane,
-   *  anything else goes to the brain. */
+  /** Below this the route answer is ignored and the brain takes the utterance. */
   route: ROUTE_THRESHOLD,
-  /** Intent confidence at or above which a page verb keeps the fast lane when the route is unsure. */
+  /** Route confidence the fast lanes (browser_now, computer) need; less is conversation. */
+  fastLane: FAST_LANE_THRESHOLD,
+  /** Intent confidence at or above which a browser intent counts as actionable for the fast lane. */
   browserIntent: 0.6,
 };
 
@@ -107,7 +108,10 @@ export function buildState(parsed: ParsedCommand, snapshot: PageSnapshot) {
 export function buildQuestions(parsed: ParsedCommand, snapshot: PageSnapshot): Questions {
   const questions: Questions = {
     route: choice(
-      { question: "Which part of the assistant should handle what the user said: the browser acting on the current page right now, the Mac's applications, or the agent that thinks, remembers and uses tools?", command: parsed.text },
+      {
+        question: "The user is talking to their assistant (Hermes), who answers, remembers and uses tools. Should this go to Hermes as conversation, or is it an obvious quick action for the browser on the current page, or for opening a Mac app?",
+        command: parsed.text,
+      },
       ROUTES as unknown as ChoiceCriteria,
     ),
     intent: choice(

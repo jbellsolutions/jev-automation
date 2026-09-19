@@ -9,6 +9,7 @@ export function HermesCard({ brain }: { brain: BrainProgress }) {
       <div className="hermes-head">
         <span className="tag hermes">Hermes</span>
         <span className="muted">{STATE_LABEL[brain.state]}</span>
+        {brain.retries ? <span className="muted">· retry {brain.retries}{brain.fresh ? ", fresh conversation" : ""}</span> : null}
       </div>
       {brain.tools.length > 0 && (
         <ul className="tools">

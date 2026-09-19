@@ -5,7 +5,7 @@ import { HeuristicDecider } from "../core/decide.js";
 import type { ServerMessage } from "../core/protocol.js";
 import type { CommandResult } from "../core/results.js";
 import { Session } from "../core/session.js";
-import { type Speaker, speakableText, spokenSummary } from "../core/speak.js";
+import { type Speaker, speakableText, spokenPart, spokenSummary } from "../core/speak.js";
 import { SaySpeaker } from "../server/speak/say.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
@@ -19,7 +19,26 @@ describe("speakableText", () => {
   });
 });
 
+describe("spokenPart", () => {
+  const lead = "You have two meetings today: standup at nine and lunch with Sam at noon.";
+  it("speaks the first paragraph when it fits", () => {
+    expect(spokenPart(`${lead}\n\n- 9:00 standup\n- 12:00 lunch`, 600)).toBe(lead);
+    expect(spokenPart(`**${lead}**`, 600)).toBe(lead);
+  });
+  it("cuts a long lead at a sentence boundary, else clips", () => {
+    const long = `${lead} ${lead} ${lead}`;
+    expect(spokenPart(long, 160)).toBe(`${lead} ${lead}`); // two fit, the third would not
+    expect(spokenPart(long, 100)).toBe(lead);
+    expect(spokenPart("a".repeat(400), 160).length).toBeLessThanOrEqual(160);
+    expect(spokenPart("", 160)).toBe("");
+  });
+  it("does not stop at a one-word heading", () => {
+    expect(spokenPart("# Today\n\nTwo meetings, both before one.\n\nDetails below.", 600)).toBe("Today Two meetings, both before one. Details below.");
+  });
+});
+
 describe("spokenSummary", () => {
+
   it("speaks the outcome of a single step", () => {
     expect(spokenSummary(base({ steps: [step("Opened https://wikipedia.org")] }))).toBe("Opened wikipedia.org");
   });

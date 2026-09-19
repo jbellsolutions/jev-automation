@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BrainEvent } from "../core/brain.js";
-import { HermesBrain, createBrain, mapHermesEvent, parseSseFrames, terminalFromStatus } from "../server/hermes.js";
+import { HermesBrain, VOICE_INSTRUCTIONS, createBrain, mapHermesEvent, parseSseFrames, terminalFromStatus } from "../server/hermes.js";
 
 /** Just enough of the Hermes API server (v0.21.1 wire shapes) to drive HermesBrain. */
 class FakeHermes {
@@ -118,7 +118,7 @@ afterEach(async () => {
 async function boot(opts: Partial<ConstructorParameters<typeof HermesBrain>[0]> = {}) {
   fake = new FakeHermes();
   const url = await fake.listen();
-  const brain = new HermesBrain({ baseUrl: url, apiKey: "k", pollMs: 5, ...opts });
+  const brain = new HermesBrain({ baseUrl: url, apiKey: "k", pollMs: 5, sessionId: "jev-voice", ...opts });
   return { brain, fake };
 }
 
@@ -151,13 +151,15 @@ describe("mapHermesEvent / terminalFromStatus", () => {
     expect(mapHermesEvent({ event: "approval.request", command: "rm -rf build", request_id: "r1", choices: ["once", "deny"] })).toEqual({ kind: "approval", requestId: "r1", summary: "rm -rf build", choices: ["once", "deny"] });
     expect(mapHermesEvent({ event: "approval.request", description: "send the email", choices: ["bogus"] })).toEqual({ kind: "approval", requestId: null, summary: "send the email", choices: ["once", "deny"] });
     expect(mapHermesEvent({ event: "run.completed", output: "done", usage: {} })).toEqual({ kind: "completed", output: "done" });
-    expect(mapHermesEvent({ event: "run.failed", error: "boom" })).toEqual({ kind: "failed", error: "boom" });
+    expect(mapHermesEvent({ event: "run.failed", error: "boom" })).toEqual({ kind: "failed", error: "boom", modelError: false });
+    expect(mapHermesEvent({ event: "run.failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request" })).toEqual({ kind: "failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request", modelError: true });
     expect(mapHermesEvent({ event: "run.cancelled" })).toEqual({ kind: "cancelled" });
     expect(mapHermesEvent({ event: "subagent.start", goal: "x" })).toBeNull();
     expect(mapHermesEvent("junk")).toBeNull();
   });
   it("reads terminal statuses", () => {
     expect(terminalFromStatus({ status: "completed", output: "42" })).toEqual({ kind: "completed", output: "42" });
+    expect(terminalFromStatus({ status: "failed", error: "context length exceeded" })).toEqual({ kind: "failed", error: "context length exceeded", modelError: true });
     expect(terminalFromStatus({ status: "interrupted", error: "restart" })).toEqual({ kind: "cancelled" });
     expect(terminalFromStatus({ status: "running" })).toBeNull();
   });
@@ -169,7 +171,7 @@ describe("HermesBrain", () => {
     const run = await brain.send("what's up");
     expect(run.id).toBe("run_1");
     const admit = fake.requests.find((r) => r.path === "/v1/runs")!;
-    expect(admit.body).toEqual({ input: "what's up", session_id: "jev-voice" });
+    expect(admit.body).toEqual({ input: "what's up", session_id: "jev-voice", instructions: VOICE_INSTRUCTIONS });
     expect(admit.headers["idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/);
     expect(fake.sessions.has("jev-voice")).toBe(true);
     const events = collect(run.events);
@@ -257,6 +259,33 @@ describe("HermesBrain", () => {
     await expect(gone.send("x")).rejects.toThrow(/unreachable/);
     const ok = new HermesBrain({ baseUrl: fake.url, apiKey: "k" });
     expect(await ok.health()).toEqual({ ok: true, detail: "hermes-agent 0.21.1" });
+  });
+
+  it("names sessions by time, remembers the current one, and leaves it behind on reset", async () => {
+    const store: { id?: string } = {};
+    const state = { get: () => store.id, set: (id: string) => void (store.id = id) };
+    let t = new Date(2026, 8, 19, 18, 5, 7);
+    const { brain, fake } = await boot({ sessionId: undefined, state, now: () => t, instructions: "be brief" });
+    expect(brain.session).toBe("jev-voice-20260919-180507");
+    await brain.send("hi");
+    expect(store.id).toBe("jev-voice-20260919-180507");
+    expect(fake.requests.find((r) => r.path === "/v1/runs")!.body).toMatchObject({ session_id: "jev-voice-20260919-180507", instructions: "be brief" });
+
+    await brain.reset(); // same second: still a different id
+    expect(brain.session).toBe("jev-voice-20260919-180507-2");
+    t = new Date(2026, 8, 19, 18, 5, 9);
+    await brain.send("again", { fresh: true });
+    expect(brain.session).toBe("jev-voice-20260919-180509");
+    expect(store.id).toBe("jev-voice-20260919-180509");
+    expect([...fake.sessions]).toEqual(["jev-voice-20260919-180507", "jev-voice-20260919-180509"]);
+
+    // a restart picks the remembered conversation up
+    const again = new HermesBrain({ baseUrl: fake.url, apiKey: "k", state, now: () => t });
+    expect(again.session).toBe("jev-voice-20260919-180509");
+    // and instructions can be switched off
+    const quiet = new HermesBrain({ baseUrl: fake.url, apiKey: "k", sessionId: "s", instructions: null });
+    await quiet.send("x");
+    expect(fake.requests.at(-1)!.body).toEqual({ input: "x", session_id: "s" });
   });
 
   it("createBrain needs the key and defaults the URL", () => {

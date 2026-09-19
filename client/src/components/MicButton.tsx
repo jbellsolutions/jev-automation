@@ -11,7 +11,7 @@ const PROVIDER_NAMES: Record<string, string> = { deepgram: "Deepgram", apple: "o
 export function MicButton({ speech }: { speech: Voice }) {
   const disabled = speech.availability !== "ok";
   const engine = speech.engine === "streaming" ? (speech.provider ? (PROVIDER_NAMES[speech.provider] ?? speech.provider) : "streaming") : "browser speech";
-  const label = speech.availability === "unsupported" ? "Voice not supported here" : speech.availability === "insecure" ? "Voice needs HTTPS or localhost" : speech.listening ? `Listening (${engine})… speak a command` : `Tap to start listening · ${engine}`;
+  const label = speech.availability === "unsupported" ? "Voice not supported here" : speech.availability === "insecure" ? "Voice needs HTTPS or localhost" : speech.listening ? `Listening (${engine}) — ⌥Space or Esc to stop` : `Tap to start listening · ${engine}`;
   const note = NOTES[speech.availability] ?? speech.error;
   return (
     <>

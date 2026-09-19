@@ -5,21 +5,57 @@
  *
  *  Enable it in ~/.hermes/.env: API_SERVER_ENABLED=true, API_SERVER_KEY=<16+ chars>. */
 import { randomUUID } from "node:crypto";
-import type { ApprovalChoice, Brain, BrainEvent, BrainRun, BrainTerminal } from "../core/brain.js";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { type ApprovalChoice, type Brain, type BrainEvent, type BrainRun, type BrainTerminal, isModelError } from "../core/brain.js";
+import { readState, writeState } from "./state.js";
 
 export interface HermesOptions {
   baseUrl: string;
   apiKey: string;
-  /** Hermes session the assistant's turns accumulate in; created on first use, reused after. */
+  /** Hermes session the assistant's turns accumulate in. Without one, the last one from
+   *  `state` is reused, else a new `jev-voice-<stamp>` is created; reset() always makes a new one. */
   sessionId?: string;
+  /** Remembers the current session across restarts. */
+  state?: { get(): string | undefined; set(id: string): void };
+  /** Standing instructions sent with every run (see VOICE_INSTRUCTIONS). */
+  instructions?: string | null;
   fetch?: typeof fetch;
   /** How often to poll the run status when the event stream is gone. */
   pollMs?: number;
   /** For tests: how long to wait between polls / for the first status. */
   sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
 }
 
-export const DEFAULT_SESSION_ID = "jev-voice";
+export const SESSION_PREFIX = "jev-voice";
+
+/** What Hermes is told on every run from the voice lane, on top of its own persona (SOUL.md
+ *  is untouched). Replaceable by ~/.jev/voice-instructions.md. */
+export const VOICE_INSTRUCTIONS = `You are talking with Justin by voice, through Jev — the floating assistant panel on his Mac. Everything he says here is spoken; everything you write is read aloud to him, and the full text is shown in the panel.
+
+How to reply
+- Lead with the spoken answer: one to three short, natural sentences, the way you would say it out loud. No markdown, headings, bullet lists, code fences or URLs in that lead. Plain words, contractions, no filler.
+- If there is more to show (details, lists, links, code), put it after a blank line; the panel shows it, the voice reads only the lead.
+- If the request is ambiguous, ask one short question instead of guessing. If something needs his OK (anything destructive, spending money, sending a message on his behalf), say what you are about to do and ask.
+- When you did something, say what happened in one sentence, not how.
+
+Your hands
+- jev_browse / jev_status / jev_reply / jev_cancel are Justin's own browser on this Mac, signed in to his accounts: use jev_browse for any to-do that happens in a web page (open a site, click, type, search, read what is on the page), in preference to your own browser_* tools, which are a separate unsigned-in browser. Go straight to it; do not plan or deliberate first.
+- The super-browser tools are a separate hosted browser fleet: use them only when Justin says "Super Browser", when the task is not on this machine, or when it needs its own browsers or scraping at scale. Otherwise leave them alone.
+- Terminal and file tools are this Mac. Memory and session search are your own recall.
+- Spoken to-dos are exactly what was asked: no council, no readiness review, no scaling a list up beyond the number he said. Do the thing, then tell him.
+- If a surface is not available — an app Jev cannot drive yet, a site the browser is not signed in to, a tool that is not connected — say so in one sentence and offer the nearest thing you can do.`;
+
+export function loadVoiceInstructions(file = path.join(process.env.JEV_HOME ?? path.join(homedir(), ".jev"), "voice-instructions.md")): string {
+  try {
+    const text = readFileSync(file, "utf8").trim();
+    return text || VOICE_INSTRUCTIONS;
+  } catch {
+    return VOICE_INSTRUCTIONS;
+  }
+}
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const CHOICES: ApprovalChoice[] = ["once", "session", "always", "deny"];
 
@@ -78,8 +114,10 @@ export function mapHermesEvent(raw: unknown): BrainEvent | null {
       return { kind: "steered" };
     case "run.completed":
       return { kind: "completed", output: str(e.output) };
-    case "run.failed":
-      return { kind: "failed", error: str(e.error) || "run failed" };
+    case "run.failed": {
+      const error = str(e.error) || "run failed";
+      return { kind: "failed", error, modelError: isModelError(error) };
+    }
     case "run.cancelled":
     case "run.interrupted":
       return { kind: "cancelled" };
@@ -95,8 +133,10 @@ export function terminalFromStatus(status: unknown): BrainTerminal | null {
   switch (str(s.status)) {
     case "completed":
       return { kind: "completed", output: str(s.output) };
-    case "failed":
-      return { kind: "failed", error: str(s.error) || "run failed" };
+    case "failed": {
+      const error = str(s.error) || "run failed";
+      return { kind: "failed", error, modelError: isModelError(error) };
+    }
     case "cancelled":
     case "interrupted":
       return { kind: "cancelled" };
@@ -110,16 +150,36 @@ const isTerminal = (e: BrainEvent): e is BrainTerminal => e.kind === "completed"
 export class HermesBrain implements Brain {
   readonly name = "Hermes";
   private readonly fetchImpl: typeof fetch;
-  private readonly sessionId: string;
+  private sessionId: string;
   private readonly pollMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => Date;
   private sessionReady: Promise<void> | null = null;
 
   constructor(private readonly opts: HermesOptions) {
     this.fetchImpl = opts.fetch ?? fetch;
-    this.sessionId = opts.sessionId ?? DEFAULT_SESSION_ID;
+    this.now = opts.now ?? (() => new Date());
+    this.sessionId = opts.sessionId ?? opts.state?.get() ?? this.newSessionId();
     this.pollMs = opts.pollMs ?? 1000;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /** The conversation the next run joins. */
+  get session(): string {
+    return this.sessionId;
+  }
+
+  private newSessionId(): string {
+    const d = this.now();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${SESSION_PREFIX}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+
+  /** Leave the current conversation behind; the next run starts a new one. */
+  async reset(): Promise<void> {
+    const next = this.newSessionId();
+    this.sessionId = next === this.sessionId ? `${next}-2` : next;
+    this.sessionReady = null;
   }
 
   private url(path: string): string {
@@ -158,11 +218,12 @@ export class HermesBrain implements Brain {
   /** Create the assistant's session once; "exists" on a later start is fine. */
   private ensureSession(): Promise<void> {
     this.sessionReady ??= (async () => {
-      const r = await this.request<{ error?: { code?: string; message?: string } }>("POST", "/api/sessions", { id: this.sessionId, title: "Jev (voice)", source: "api_server" });
-      if (r.status === 201 || r.status === 200 || r.status === 409) return;
+      const r = await this.request<{ error?: { code?: string; message?: string } }>("POST", "/api/sessions", { id: this.sessionId, title: `Jev (voice) ${this.sessionId}`, source: "api_server" });
       const err = r.data?.error;
-      if (typeof err === "object" && /exist/i.test(`${err?.code ?? ""} ${err?.message ?? ""}`)) return;
-      throw this.fail(r.status, r.data, "session");
+      // Hermes also refuses a duplicate *title*, hence the id in it; an id that exists is ours from before
+      const exists = r.status === 409 || (typeof err === "object" && /exist/i.test(`${err?.code ?? ""} ${err?.message ?? ""}`));
+      if (r.status !== 201 && r.status !== 200 && !exists) throw this.fail(r.status, r.data, "session");
+      this.opts.state?.set(this.sessionId);
     })().catch((err) => {
       this.sessionReady = null; // try again on the next command
       throw err;
@@ -170,9 +231,13 @@ export class HermesBrain implements Brain {
     return this.sessionReady;
   }
 
-  async send(text: string, opts: { signal?: AbortSignal } = {}): Promise<BrainRun> {
+  async send(text: string, opts: { signal?: AbortSignal; fresh?: boolean } = {}): Promise<BrainRun> {
+    if (opts.fresh) await this.reset();
     await this.ensureSession();
-    const r = await this.request<{ run_id?: string; error?: unknown }>("POST", "/v1/runs", { input: text, session_id: this.sessionId }, { "Idempotency-Key": randomUUID() }, opts.signal);
+    const body: Record<string, unknown> = { input: text, session_id: this.sessionId };
+    const instructions = this.opts.instructions === undefined ? VOICE_INSTRUCTIONS : this.opts.instructions;
+    if (instructions) body.instructions = instructions;
+    const r = await this.request<{ run_id?: string; error?: unknown }>("POST", "/v1/runs", body, { "Idempotency-Key": randomUUID() }, opts.signal);
     if (r.status !== 202 || !r.data?.run_id) throw this.fail(r.status, r.data, "run");
     const id = r.data.run_id;
     return { id, events: this.events(id, opts.signal) };
@@ -267,8 +332,29 @@ export class HermesBrain implements Brain {
   }
 }
 
-export function createBrain(env: NodeJS.ProcessEnv = process.env): HermesBrain | null {
+/** The brain from the environment; the current conversation is remembered in ~/.jev/state.json
+ *  unless HERMES_SESSION_ID pins one. */
+export function createBrain(env: NodeJS.ProcessEnv = process.env, state: HermesOptions["state"] | null = sessionStore()): HermesBrain | null {
   const apiKey = env.HERMES_API_KEY?.trim();
   if (!apiKey) return null;
-  return new HermesBrain({ baseUrl: env.HERMES_API_URL?.trim() || "http://127.0.0.1:8642", apiKey, sessionId: env.HERMES_SESSION_ID?.trim() || undefined });
+  return new HermesBrain({
+    baseUrl: env.HERMES_API_URL?.trim() || "http://127.0.0.1:8642",
+    apiKey,
+    sessionId: env.HERMES_SESSION_ID?.trim() || undefined,
+    state: state ?? undefined,
+    instructions: loadVoiceInstructions(),
+  });
+}
+
+function sessionStore(): HermesOptions["state"] {
+  return {
+    get: () => readState().hermesSessionId,
+    set: (id) => {
+      try {
+        writeState({ hermesSessionId: id });
+      } catch {
+        /* a read-only home is not fatal: the session just is not remembered */
+      }
+    },
+  };
 }

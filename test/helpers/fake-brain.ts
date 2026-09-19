@@ -4,6 +4,9 @@ import type { ApprovalChoice, Brain, BrainEvent, BrainRun } from "../../core/bra
 export class FakeBrain implements Brain {
   readonly name = "Hermes";
   sent: string[] = [];
+  /** `fresh` flags per send, parallel to `sent`. */
+  freshFlags: boolean[] = [];
+  resets = 0;
   approvals: Array<{ runId: string; choice: ApprovalChoice; requestId: string | null | undefined }> = [];
   steers: Array<{ runId: string; text: string }> = [];
   stops: string[] = [];
@@ -11,9 +14,15 @@ export class FakeBrain implements Brain {
   private runs = 0;
   private feeds = new Map<string, { push: (e: BrainEvent | null) => void; fail?: (err: Error) => void }>();
 
-  async send(text: string): Promise<BrainRun> {
+  async reset(): Promise<void> {
+    this.resets++;
+  }
+
+  async send(text: string, opts: { signal?: AbortSignal; fresh?: boolean } = {}): Promise<BrainRun> {
     if (this.failSend) throw new Error(this.failSend);
+    if (opts.fresh) await this.reset();
     this.sent.push(text);
+    this.freshFlags.push(!!opts.fresh);
     const id = `run_${++this.runs}`;
     const queue: Array<BrainEvent | null> = [];
     let wake: (() => void) | null = null;

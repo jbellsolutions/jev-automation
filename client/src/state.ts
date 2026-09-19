@@ -24,6 +24,9 @@ export interface BrainProgress {
   text: string;
   tools: Array<{ tool: string; preview: string; durationMs?: number; error?: boolean }>;
   state: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  /** Times the utterance was re-sent after a model error, and whether that moved to a fresh conversation. */
+  retries?: number;
+  fresh?: boolean;
 }
 
 export type Pending =
@@ -100,6 +103,9 @@ function progress(entry: LogEntry, runId: string, event: BrainEvent): BrainProgr
       return { ...p, text: event.output || p.text, state: "completed" };
     case "failed":
       return { ...p, text: p.text ? `${p.text}\n\n${event.error}` : event.error, state: "failed" };
+    case "retrying":
+      // the same step, a new run: start its text over, keep the tool history for the record
+      return { ...p, runId, text: "", state: "running", retries: (p.retries ?? 0) + 1, fresh: event.fresh || p.fresh };
     case "cancelled":
       return { ...p, state: "cancelled" };
     default:
@@ -123,7 +129,9 @@ function applyBrainEvent(state: State, stepId: number, runId: string, event: Bra
           ? { text: event.error, level: "error" as const }
           : event.kind === "cancelled"
             ? { text: "Cancelled", level: "warn" as const }
-            : entry.result;
+            : event.kind === "retrying"
+              ? { text: event.fresh ? "Retrying in a fresh conversation…" : "Retrying…", level: "warn" as const }
+              : entry.result;
     entries[idx] = { ...entry, brain, result };
   }
   let approval = state.approval;
@@ -136,6 +144,7 @@ function applyBrainEvent(state: State, stepId: number, runId: string, event: Bra
   }
   if (event.kind === "completed") status = { text: "Hermes: done", level: "ok" };
   else if (event.kind === "failed") status = { text: `Hermes: ${event.error}`, level: "error" };
+  else if (event.kind === "retrying") status = { text: event.fresh ? "Hermes: retrying in a fresh conversation…" : "Hermes: retrying…", level: "warn" };
   else if (event.kind === "cancelled") status = { text: "Hermes: stopped", level: "warn" };
   return { ...state, entries, approval, status };
 }
