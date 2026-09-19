@@ -18,7 +18,7 @@ export function defaultAppleBin(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "native", "jev-speech", "jev-speech");
 }
 
-export function appleSpeechAvailable(bin = defaultAppleBin()): boolean {
+export function appleSpeechAvailable(bin: string = defaultAppleBin()): boolean {
   return process.platform === "darwin" && existsSync(bin);
 }
 

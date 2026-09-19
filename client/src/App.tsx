@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { ClarifyCard } from "./components/ClarifyCard.tsx";
 import { CommandInput } from "./components/CommandInput.tsx";
 import { ConfirmCard } from "./components/ConfirmCard.tsx";
@@ -25,12 +25,45 @@ export function App() {
     [send],
   );
   const speech = useVoice({ transport, sttProvider: state.stt, muted: state.speaking, onUtterance: (text) => command(text, "voice") });
+  const desktop = transport.mode === "desktop";
+
+  // Desktop shell: the global hotkey drives the microphone, the tray mirrors its state, Escape hides the panel.
+  useEffect(() => {
+    if (!desktop) return;
+    document.body.classList.add("desktop");
+    const bridge = window.jev;
+    const offToggle = bridge?.onToggleListening?.(() => speech.toggle());
+    const offStop = bridge?.onStopListening?.(() => speech.stop());
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") (speech.listening ? speech.stop : bridge?.hide)?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      offToggle?.();
+      offStop?.();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [desktop, speech.toggle, speech.stop, speech.listening]);
+  useEffect(() => {
+    if (desktop) window.jev?.setListening?.(speech.listening);
+  }, [desktop, speech.listening]);
+  useEffect(() => {
+    if (desktop && window.jev?.autoListen && state.jev && !speech.listening) speech.start();
+    // once, when the companion has said hello
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktop, state.jev !== null]);
+  useEffect(() => {
+    if (speech.error) console.error(`[voice] ${speech.error}`);
+  }, [speech.error]);
+  useEffect(() => {
+    if (speech.listening) console.log(`[voice] listening via ${speech.engine}${speech.provider ? ` (${speech.provider})` : ""}`);
+  }, [speech.listening, speech.engine, speech.provider]);
 
   return (
     <>
-      <TopBar jev={state.jev} />
-      <main className="layout">
-        <LiveView page={state.page} status={state.status} connected={state.connected} send={send} />
+      <TopBar jev={state.jev} desktop={desktop} onHide={desktop ? () => window.jev?.hide?.() : undefined} />
+      <main className={`layout${desktop ? " desktop" : ""}`}>
+        <LiveView page={state.page} status={state.status} connected={state.connected} send={send} fixedViewport={desktop ? { width: 1024, height: 640 } : undefined} />
         <aside className="control-pane">
           <MicButton speech={speech} />
           <CommandInput onSubmit={(t) => command(t, "text")} />

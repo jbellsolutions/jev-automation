@@ -3,9 +3,16 @@
 
 export interface DesktopBridge {
   mode: "desktop";
-  /** e.g. "http://127.0.0.1:3000" */
+  /** e.g. "http://127.0.0.1:3111" */
   baseUrl: string;
-  token: string;
+  autoListen?: boolean;
+  /** The global hotkey fired: toggle the microphone. Returns an unsubscribe. */
+  onToggleListening?(cb: () => void): () => void;
+  onStopListening?(cb: () => void): () => void;
+  /** Tell the shell what the microphone is doing (tray icon, hotkey state). */
+  setListening?(listening: boolean): void;
+  /** Tuck the panel away. */
+  hide?(): void;
 }
 
 export interface Transport {

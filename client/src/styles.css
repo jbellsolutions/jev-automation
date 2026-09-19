@@ -85,3 +85,18 @@ button.link { background: none; border: none; color: var(--muted); padding: 0; t
 .help { color: var(--muted); font-size: 12px; }
 .help summary { cursor: pointer; }
 .help ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* ---- desktop panel (Electron) ---- */
+body.desktop { -webkit-user-select: none; user-select: none; }
+body.desktop .topbar { -webkit-app-region: drag; padding: 10px 14px; }
+body.desktop .topbar .pill, body.desktop .topbar .hide-btn { -webkit-app-region: no-drag; }
+.hide-btn { margin-left: 8px; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.hide-btn:hover { color: var(--text); border-color: var(--text); }
+.layout.desktop { display: flex; flex-direction: column; grid-template-columns: none; padding: 10px 12px; gap: 10px; overflow: auto; }
+.layout.desktop .browser-pane { flex: none; }
+.layout.desktop .screen { min-height: 0; flex: none; }
+.layout.desktop .screen.scaled { width: 100%; }
+.layout.desktop .screen.scaled img { height: auto; }
+.layout.desktop .control-pane { flex: 1; min-height: 0; }
+.layout.desktop .help { display: none; }
+body.desktop, body.desktop #root { height: 100vh; }

@@ -20,6 +20,8 @@
   "include": [
     "core/**/*.ts",
     "server/**/*.ts",
+    "app/**/*.ts",
+    "app/**/*.cts",
     "scripts/**/*.ts",
     "test/**/*.ts",
     "vite.config.ts",
