@@ -476,6 +476,11 @@ describe("Session: brain lane (Hermes)", () => {
     expect(decided.steps[0]!.result).toEqual({ text: "Hermes is on it", level: "ok" });
     expect(brain.sent).toEqual(["yo can you hear me", "the the"]);
     expect(executor.executed).toEqual([]);
+    // …but while that run is going, another fragment is room noise, not a steer
+    const noise = await quiet.command("the the");
+    expect(noise.steps[0]!.result).toEqual({ text: "Didn't catch that; Hermes is still working", level: "warn" });
+    expect(brain.steers).toEqual([]);
+    brain.emit("run_2", { kind: "completed", output: "Sorry?" }, null);
   });
 
   it("'new conversation' resets the brain and says so", async () => {

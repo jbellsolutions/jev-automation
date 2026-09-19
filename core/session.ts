@@ -599,7 +599,12 @@ export class Session {
       step.result = this.report("Stopped", "ok");
       return step;
     }
-    // with a brain there are no dead ends: half-heard fragments go to it too, it can ask back
+    // with a brain there are no dead ends: half-heard fragments go to it too, it can ask back —
+    // unless it is busy: then a fragment is more likely room noise than a steer, and is dropped
+    if (decision.route === "unclear" && this.brainFor && this.brain) {
+      step.result = this.report("Didn't catch that; Hermes is still working", "warn");
+      return step;
+    }
     if ((decision.route === "hermes" || decision.route === "unclear") && this.brainFor) return this.runBrain(step, said);
     if (decision.action.kind === "open_app") {
       if (!this.deps.computer) {

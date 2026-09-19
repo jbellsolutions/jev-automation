@@ -105,7 +105,7 @@ function progress(entry: LogEntry, runId: string, event: BrainEvent): BrainProgr
       return { ...p, text: p.text ? `${p.text}\n\n${event.error}` : event.error, state: "failed" };
     case "retrying":
       // the same step, a new run: start its text over, keep the tool history for the record
-      return { ...p, runId, text: "", state: "running", retries: (p.retries ?? 0) + 1, fresh: event.fresh || p.fresh };
+      return { ...p, runId, text: "", state: "running", retries: (p.retries ?? 0) + 1, fresh: event.fresh || !!p.fresh };
     case "cancelled":
       return { ...p, state: "cancelled" };
     default:

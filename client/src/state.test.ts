@@ -35,6 +35,22 @@ describe("reducer: brain events", () => {
     expect(done.status).toEqual({ text: "Hermes: done", level: "ok" });
   });
 
+  it("a retry starts the run's text over and says so, keeping the tool record", () => {
+    const s = run([
+      ...start,
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "tool_start", tool: "gcal", preview: "today" } },
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "delta", text: "Two " } },
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "failed", error: "HTTP 400 Bad Request", modelError: true } },
+      { type: "brain_event", stepId: 7, runId: "run_2", event: { kind: "retrying", attempt: 2, fresh: false } },
+    ]);
+    expect(s.entries[1]!.brain).toMatchObject({ runId: "run_2", text: "", state: "running", retries: 1, fresh: false, tools: [{ tool: "gcal" }] });
+    expect(s.entries[1]!.result).toEqual({ text: "Retrying…", level: "warn" });
+    expect(s.status).toEqual({ text: "Hermes: retrying…", level: "warn" });
+    const fresh = reducer(s, { type: "brain_event", stepId: 7, runId: "run_3", event: { kind: "retrying", attempt: 3, fresh: true } });
+    expect(fresh.entries[1]!.brain).toMatchObject({ runId: "run_3", retries: 2, fresh: true });
+    expect(fresh.status.text).toBe("Hermes: retrying in a fresh conversation…");
+  });
+
   it("raises and clears the approval card", () => {
     const s = run([...start, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] } }]);
     expect(s.approval).toEqual({ runId: "run_1", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });

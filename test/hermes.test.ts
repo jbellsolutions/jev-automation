@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BrainEvent } from "../core/brain.js";
 import { HermesBrain, VOICE_INSTRUCTIONS, createBrain, mapHermesEvent, parseSseFrames, terminalFromStatus } from "../server/hermes.js";
@@ -110,6 +113,7 @@ class FakeHermes {
 }
 
 let fake: FakeHermes | null = null;
+process.env.JEV_HOME = mkdtempSync(path.join(tmpdir(), "jev-home-")); // createBrain's session store must not touch ~/.jev
 afterEach(async () => {
   await fake?.close();
   fake = null;
