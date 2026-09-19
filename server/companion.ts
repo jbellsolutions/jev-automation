@@ -110,6 +110,9 @@ export function createCompanion(opts: CompanionOptions): Companion {
         case "approval_reply":
           if (["once", "session", "always", "deny"].includes(String(msg.choice))) void session.approve(msg.choice);
           break;
+        case "interrupt":
+          session.interrupt();
+          break;
         case "click_at":
           void session.clickAt(Number(msg.fx), Number(msg.fy));
           break;

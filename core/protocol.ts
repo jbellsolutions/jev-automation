@@ -10,6 +10,8 @@ export type ClientMessage =
   | { type: "pick"; elementId: string }
   /** Answer to a brain approval request (the agent asked before doing something). */
   | { type: "approval_reply"; choice: ApprovalChoice }
+  /** Stop talking (the user cut in); whatever is being done carries on. */
+  | { type: "interrupt" }
   /** Click on the live view; fx/fy are fractions (0–1) of the image so resizes stay accurate. */
   | { type: "click_at"; fx: number; fy: number }
   /** The pixel size the UI has available for the live view; the server sizes the viewport to match. */

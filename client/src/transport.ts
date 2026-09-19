@@ -11,6 +11,9 @@ export interface DesktopBridge {
   onStopListening?(cb: () => void): () => void;
   /** Tell the shell what the microphone is doing (tray icon, hotkey state). */
   setListening?(listening: boolean): void;
+  /** The hotkey fired while the assistant was talking: cut it off. */
+  onInterrupt?(cb: () => void): () => void;
+  setSpeaking?(speaking: boolean): void;
   /** Tuck the panel away. */
   hide?(): void;
 }

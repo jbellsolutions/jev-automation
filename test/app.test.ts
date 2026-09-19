@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onEscape, onHotkey, onRendererListening, onWindowVisibility } from "../app/hotkey.js";
+import { onEscape, onHotkey, onRendererListening, onRendererSpeaking, onWindowVisibility } from "../app/hotkey.js";
 import { encodePng, trayAlpha, trayIconPng } from "../app/tray-icon.js";
 
 describe("panel hotkey state machine", () => {
@@ -16,6 +16,16 @@ describe("panel hotkey state machine", () => {
     expect(onEscape({ visible: true, listening: true })).toEqual({ state: { visible: true, listening: false }, effects: ["stop_listening"] });
     expect(onEscape({ visible: true, listening: false })).toEqual({ state: { visible: false, listening: false }, effects: ["hide"] });
     expect(onEscape({ visible: false, listening: false }).effects).toEqual([]);
+  });
+
+  it("while the assistant talks, the hotkey cuts it off first and keeps (or starts) listening", () => {
+    expect(onHotkey({ visible: true, listening: true, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt"] });
+    expect(onHotkey({ visible: true, listening: false, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt", "focus", "start_listening"] });
+    expect(onHotkey({ visible: false, listening: false, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt", "show", "focus", "start_listening"] });
+    expect(onEscape({ visible: true, listening: true, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt"] });
+    expect(onRendererSpeaking({ visible: true, listening: true }, true)).toEqual({ visible: true, listening: true, speaking: true });
+    const s = { visible: true, listening: true };
+    expect(onRendererSpeaking(s, false)).toBe(s);
   });
 
   it("follows what the renderer and window report", () => {

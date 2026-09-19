@@ -576,6 +576,19 @@ describe("Session: brain lane (Hermes)", () => {
     expect(speaker!.said.at(-1)).toBe(lead);
   });
 
+  it("interrupt() stops the voice and unmutes at once; the run carries on", async () => {
+    const { session, brain, speaker, messages } = withBrain({ speaker: true });
+    await session.command("what's on my calendar today", { speak: true });
+    brain.emit("run_1", { kind: "completed", output: "A long answer that keeps going." }, null);
+    await tick();
+    expect(speaker!.said.at(-1)).toBe("A long answer that keeps going.");
+    session.interrupt();
+    expect(speaker!.stopped).toBeGreaterThan(0);
+    const speaking = messages.filter((m): m is Extract<ServerMessage, { type: "speaking" }> => m.type === "speaking").map((m) => m.active);
+    expect(speaking.at(-1)).toBe(false);
+    expect(brain.stops).toEqual([]);
+  });
+
   it("an unreachable brain is an error, not a hang", async () => {
     const { session, brain } = withBrain();
     brain.failSend = "Hermes API unreachable at http://127.0.0.1:8642";

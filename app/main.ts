@@ -9,9 +9,9 @@ import { selectComputer } from "../server/computer.js";
 import { loadEnvFile } from "../server/env.js";
 import { createBrain } from "../server/hermes.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
-import { selectSpeaker } from "../server/speak/say.js";
+import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
 import { selectSttProvider } from "../server/stt/select.js";
-import { type PanelState, onEscape, onHotkey, onRendererListening, onWindowVisibility } from "./hotkey.js";
+import { type PanelState, onEscape, onHotkey, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
 import { trayIconPng } from "./tray-icon.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/app
@@ -49,6 +49,10 @@ function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
       case "stop_listening":
         // the renderer owns the microphone; it toggles and reports back through jev:listening
         win?.webContents.send(e === "start_listening" ? "jev:toggle-listening" : "jev:stop-listening");
+        break;
+      case "interrupt":
+        // the renderer holds the companion socket; it asks the session to stop talking
+        win?.webContents.send("jev:interrupt");
         break;
     }
   }
@@ -188,7 +192,7 @@ async function main() {
       { label: "Show Jev", click: () => showPanel() },
       { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects) },
       { type: "separator" },
-      { label: `Voice in: ${stt ? stt.name : "browser speech"} · out: ${speaker ? "say" : "off"}`, enabled: false },
+      { label: `Voice in: ${stt ? stt.name : "browser speech"} · out: ${describeSpeaker(speaker)}`, enabled: false },
       { label: `Jev: ${decider.enabled ? decider.model : "heuristics"}`, enabled: false },
       { type: "separator" },
       { label: "Quit Jev", click: () => app.quit() },
@@ -201,13 +205,16 @@ async function main() {
     panel = onRendererListening(panel, !!listening);
     refreshTray();
   });
-  ipcMain.on("jev:hide", () => applyEffects(onEscape({ ...panel, listening: false }).effects));
+  ipcMain.on("jev:speaking", (_e, speaking: boolean) => {
+    panel = onRendererSpeaking(panel, !!speaking);
+  });
+  ipcMain.on("jev:hide", () => applyEffects(onEscape({ ...panel, listening: false, speaking: false }).effects));
 
   if (!globalShortcut.register(HOTKEY, () => applyEffects(onHotkey(panel).effects))) {
     console.error(`Could not register the ${HOTKEY} hotkey; use the tray menu.`);
   }
   showPanel();
-  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice in: ${stt?.name ?? "web speech"}  out: ${speaker ? "say" : "off"}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
+  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice in: ${stt?.name ?? "web speech"}  out: ${describeSpeaker(speaker)}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
 
   app.on("before-quit", () => {
     quitting = true;

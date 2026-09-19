@@ -27,10 +27,12 @@ export function App() {
     },
     [send],
   );
+  const speaking = state.speaking;
+  const interrupt = useCallback(() => send({ type: "interrupt" }), [send]);
   const speech = useVoice({
     transport,
     sttProvider: state.stt,
-    muted: state.speaking,
+    muted: speaking,
     onUtterance: (text) => {
       console.log(`[voice] heard: ${text}`);
       command(text, "voice");
@@ -45,20 +47,26 @@ export function App() {
     const bridge = window.jev;
     const offToggle = bridge?.onToggleListening?.(() => speech.toggle());
     const offStop = bridge?.onStopListening?.(() => speech.stop());
+    const offInterrupt = bridge?.onInterrupt?.(() => interrupt());
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape")
-        (speech.listening ? speech.stop : bridge?.hide)?.();
+      if (e.key !== "Escape") return;
+      if (speaking) interrupt();
+      else (speech.listening ? speech.stop : bridge?.hide)?.();
     };
     window.addEventListener("keydown", onKey);
     return () => {
       offToggle?.();
       offStop?.();
+      offInterrupt?.();
       window.removeEventListener("keydown", onKey);
     };
-  }, [desktop, speech.toggle, speech.stop, speech.listening]);
+  }, [desktop, speech.toggle, speech.stop, speech.listening, speaking, interrupt]);
   useEffect(() => {
     if (desktop) window.jev?.setListening?.(speech.listening);
   }, [desktop, speech.listening]);
+  useEffect(() => {
+    if (desktop) window.jev?.setSpeaking?.(speaking);
+  }, [desktop, speaking]);
   useEffect(() => {
     if (desktop && window.jev?.autoListen && state.jev && !speech.listening) {
       console.log("[voice] auto-listen: starting");
@@ -93,7 +101,7 @@ export function App() {
           fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
         />
         <aside className="control-pane">
-          <MicButton speech={speech} />
+          <MicButton speech={speech} speaking={speaking} onInterrupt={interrupt} />
           <CommandInput onSubmit={(t) => command(t, "text")} />
           {state.pending?.kind === "confirm" && (
             <ConfirmCard

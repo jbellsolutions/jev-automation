@@ -40,6 +40,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 sys
 .mic:hover { transform: scale(1.04); }
 .mic[aria-pressed="true"] { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.4s ease-out infinite; }
 .mic:disabled { opacity: .4; cursor: not-allowed; animation: none; }
+.mic.speaking { border-color: var(--accent); background: var(--accent); color: #fff; animation: pulse 0.9s ease-out infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,107,107,.55); } 100% { box-shadow: 0 0 0 18px rgba(255,107,107,0); } }
 .mic-text { min-width: 0; }
 .mic-label { font-weight: 600; }

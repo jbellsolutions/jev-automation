@@ -7,7 +7,7 @@ import { createCompanion } from "./companion.js";
 import { selectComputer } from "./computer.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
 import { createBrain } from "./hermes.js";
-import { selectSpeaker } from "./speak/say.js";
+import { describeSpeaker, selectSpeaker } from "./speak/select.js";
 import { selectSttProvider } from "./stt/select.js";
 
 const PORT = Number(process.env.PORT ?? 3000);

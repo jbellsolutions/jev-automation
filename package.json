@@ -19,6 +19,7 @@
     "build:native": "sh scripts/build-native.sh",
     "stt:smoke": "tsx scripts/stt-smoke.ts",
     "build:app": "node scripts/build-app.mjs",
+    "voice:test": "node --import tsx scripts/voice-test.mjs",
     "app": "npm run build && npm run build:app && electron .",
     "app:run": "electron .",
     "app:fake": "npm run build && npm run build:app && JEV_AUTOLISTEN=1 electron . --remote-debugging-port=9223 --no-sandbox --use-fake-ui-for-media-stream --use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${JEV_FAKE_WAV:-scratch/cats.wav}%noloop"

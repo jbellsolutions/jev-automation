@@ -362,6 +362,14 @@ export class Session {
     });
   }
 
+  /** Stop talking, now; the microphone reopens at once. Nothing else is touched. */
+  interrupt(): void {
+    if (!this.deps.speaker) return;
+    this.speakingRun++; // the cut-off utterance's own "finished" is then ignored
+    this.deps.speaker.stop();
+    this.emit({ type: "speaking", active: false });
+  }
+
   /** Drop whatever is in flight or pending. Bypasses the queue on purpose. */
   cancel(): void {
     this.deps.speaker?.stop();

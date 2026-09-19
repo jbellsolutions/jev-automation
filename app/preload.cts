@@ -22,6 +22,14 @@ contextBridge.exposeInMainWorld("jev", {
   setListening(listening: boolean): void {
     ipcRenderer.send("jev:listening", listening);
   },
+  onInterrupt(cb: () => void): () => void {
+    const handler = () => cb();
+    ipcRenderer.on("jev:interrupt", handler);
+    return () => ipcRenderer.off("jev:interrupt", handler);
+  },
+  setSpeaking(speaking: boolean): void {
+    ipcRenderer.send("jev:speaking", speaking);
+  },
   hide(): void {
     ipcRenderer.send("jev:hide");
   },

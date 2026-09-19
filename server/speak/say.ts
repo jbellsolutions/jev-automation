@@ -10,6 +10,8 @@ export interface SayOptions {
 }
 
 export class SaySpeaker implements Speaker {
+  /** Robotic voices earn a short cut. */
+  readonly maxChars = 160;
   private current: ChildProcess | null = null;
 
   constructor(private readonly opts: SayOptions = {}) {}
@@ -45,7 +47,3 @@ export class SaySpeaker implements Speaker {
   }
 }
 
-export function selectSpeaker(env: NodeJS.ProcessEnv = process.env): Speaker | null {
-  if (process.platform !== "darwin" || (env.JEV_SPEAK ?? "on").toLowerCase() === "off") return null;
-  return new SaySpeaker({ voice: env.JEV_VOICE || undefined, rate: env.JEV_SPEECH_RATE ? Number(env.JEV_SPEECH_RATE) : undefined });
-}
