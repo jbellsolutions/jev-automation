@@ -75,6 +75,14 @@ try {
   for (const m of outcome) console.log(JSON.stringify(m).slice(0, 160));
   console.log(`tab now: ${page.url()} — ${await page.title()}`);
   ws.close();
+  // HOLD_MS keeps the throwaway Chrome up so another caller (Hermes via jev_browse) can act on it
+  const hold = Number(process.env.HOLD_MS ?? 0);
+  if (hold > 0) {
+    console.log(`holding for ${hold} ms…`);
+    await new Promise((r) => setTimeout(r, hold));
+    const tab = context.pages().at(-1) ?? page;
+    console.log(`tab after hold: ${tab.url()} — ${await tab.title().catch(() => "")}`);
+  }
 } finally {
   await context.close();
   rmSync(profile, { recursive: true, force: true });

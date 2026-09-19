@@ -62,10 +62,10 @@ export function socketAllowed(req: { url?: string; headers: { origin?: string; a
 }
 
 /** Did this upgrade request carry the token (header or `?token=`)? Required no matter the Origin
- *  for sockets that control the user's own browser. Without a configured token, only loopback
- *  reachability protects the companion, so the answer is yes. */
+ *  for sockets that control the user's own browser — and with no token configured at all the
+ *  answer is no: any web page can open a loopback socket, and this one would hand it the tab. */
 export function tokenPresented(req: { url?: string; headers: { authorization?: string } }, auth: Auth): boolean {
-  if (!auth.configured) return true;
+  if (!auth.configured) return false;
   const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
   if (m && auth.check(m[1])) return true;
   const query = new URL(req.url ?? "/", "http://x").searchParams.get("token");

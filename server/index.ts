@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
   console.log(stt ? `Voice in: streaming via ${stt.name}` : "Voice in: browser Web Speech (set DEEPGRAM_API_KEY or run npm run build:native for streaming transcription)");
   console.log(`Voice out: ${describeSpeaker(speaker)}`);
-  console.log("Chrome: waiting for the bridge extension (load dist/extension unpacked; token = JEV_TOKEN)");
+  console.log(companion.auth.configured ? "Chrome: waiting for the bridge extension (load dist/extension unpacked; token = JEV_TOKEN)" : "Chrome: bridge disabled — set JEV_TOKEN");
   if (brain) {
     const h = await brain.health();
     console.log(h.ok ? `Brain: Hermes (${h.detail}) at ${process.env.HERMES_API_URL ?? "http://127.0.0.1:8642"}` : `Brain: Hermes configured but not reachable — ${h.detail}`);

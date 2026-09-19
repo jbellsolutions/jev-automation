@@ -85,7 +85,8 @@ npm run build:extension               # → dist/extension
 Then once, in Chrome: `chrome://extensions` → turn on **Developer mode** (top right) → **Load
 unpacked** → pick `dist/extension`. Click the extension's **Details → Extension options** and
 paste the companion socket (`ws://127.0.0.1:3111/ws/bridge` for the desktop app, `:3000` for
-`npm start`) and your `JEV_TOKEN` from `.env`. The toolbar badge shows **on** while it is
+`npm start`) and your `JEV_TOKEN` from `.env` (the bridge is refused without one — it hands
+over your signed-in tab). The toolbar badge shows **on** while it is
 connected; the companion logs `chrome: bridge connected` and every UI switches to the `chrome`
 surface (and back to Playwright if the bridge drops). `chrome://` and the Web Store pages are
 off limits to extensions, so switch to a normal tab first.

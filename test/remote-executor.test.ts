@@ -94,6 +94,16 @@ describe("RemoteExecutor over /ws/bridge", () => {
     await expect(new Promise((_, reject) => wrong.once("unexpected-response", (_r, res) => reject(new Error(`HTTP ${res.statusCode}`))))).rejects.toThrow(/403/);
   });
 
+  it("refuses every bridge when no token is configured at all", async () => {
+    const bridge = new RemoteExecutor();
+    companion = createCompanion({ decider: new HeuristicDecider(), bridge });
+    const port = await companion.listen(0);
+    companion.register(bridge);
+    const any = new FakeBridge(`ws://127.0.0.1:${port}/ws/bridge`, echo);
+    await expect(any.open()).rejects.toThrow(/403/);
+    expect(bridge.ready).toBe(false);
+  });
+
   it("is not ready until a bridge attaches; then Chrome becomes the default surface", async () => {
     const { bridge, url, readiness, hub } = await boot();
     expect(bridge.ready).toBe(false);
