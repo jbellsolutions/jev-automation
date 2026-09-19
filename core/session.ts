@@ -163,9 +163,30 @@ export class Session {
   }
 
   /** A spoken or typed command. Resolves when the command has been acted on or has left a
-   *  question open; never rejects. With `speak`, the outcome is also read aloud. */
-  command(text: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.enqueue(() => this.withAwaitedVerify(!!opts.speak, () => this.handleCommand(text))), opts.speak);
+   *  question open; never rejects. With `speak`, the outcome is also read aloud. With `local`,
+   *  the brain is never consulted — for callers that are the brain (its jev_browse tool), so a
+   *  request can't bounce back into a second run. */
+  command(text: string, opts: { speak?: boolean; local?: boolean } = {}): Promise<CommandResult> {
+    return this.voiced(
+      this.enqueue(() => this.withAwaitedVerify(!!opts.speak, () => this.withLocalOnly(!!opts.local, () => this.handleCommand(text)))),
+      opts.speak,
+    );
+  }
+
+  private localOnly = false;
+  private async withLocalOnly<T>(on: boolean, task: () => Promise<T>): Promise<T> {
+    const prev = this.localOnly;
+    this.localOnly = on;
+    try {
+      return await task();
+    } finally {
+      this.localOnly = prev;
+    }
+  }
+
+  /** The brain, unless this command must stay local. */
+  private get brainFor(): Brain | null {
+    return this.localOnly ? null : (this.deps.brain ?? null);
   }
 
   /** A command whose answer the caller wants in full: when it reaches the brain, resolves with
@@ -388,7 +409,7 @@ export class Session {
     const trimmed = text.trim();
     if (!trimmed) return this.finish([]);
 
-    if (this.pending?.kind === "approval" && this.deps.brain) {
+    if (this.pending?.kind === "approval" && this.brainFor) {
       // a yes/no answers the agent; anything else is a new command and the request stays open
       const pending = this.pending;
       const reply = await this.decider.classifyReply(trimmed, pending.summary);
@@ -438,7 +459,7 @@ export class Session {
       if (decision && !this.fastLane(decision)) {
         const step = this.ack(trimmed);
         this.announce(step, decision);
-        return this.finish([await this.runStep(step, this.awaitVerify ? "blocking" : "async", decision)]);
+        return this.finish([await this.runStep(step, this.awaitVerify ? "blocking" : "async", decision, trimmed)]);
       }
       this.emit({ type: "steps", original: trimmed, commands });
     }
@@ -448,7 +469,7 @@ export class Session {
   /** Browser steps run one at a time on the fast lane; everything else is handled whole. */
   private fastLane(d: Decision): boolean {
     if (d.route === "stop" || d.route === "computer") return false;
-    if (d.route === "hermes") return !this.deps.brain;
+    if (d.route === "hermes") return !this.brainFor;
     return true;
   }
 
@@ -459,7 +480,7 @@ export class Session {
     for (let i = from; i < total; i++) {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
-      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async");
+      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async", undefined, total === 1 ? original : undefined);
       steps.push(step);
       if (step.verify?.stuck) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");
@@ -503,16 +524,19 @@ export class Session {
 
   private announce(step: StepResult, decision: Decision): void {
     step.decision = summarize(decision);
+    if (decision.route === "hermes" && this.brainFor) step.decision.actionLabel = `Ask ${this.brainFor.name}`;
     this.emit({ type: "decision", decision: step.decision });
     if (decision.meta.fallbackReason) this.report(`Jev unavailable (${decision.meta.fallbackReason}); used heuristics`, "warn");
   }
 
   /** One command: decide (unless already decided), gate, execute, check. May leave `pending` set. */
-  private async runStep(step: StepResult, verifyMode: "blocking" | "async", decided?: Decision): Promise<StepResult> {
+  private async runStep(step: StepResult, verifyMode: "blocking" | "async", decided?: Decision, raw?: string): Promise<StepResult> {
     const command = step.command;
     const decision = decided ?? (await this.decide(command, step));
     if (!decision) return step;
     const snapshot = this.lastSnapshot!;
+    // the brain gets what was actually said (case, names), not the normalised browser form
+    const said = raw ?? command;
 
     if (decision.route === "stop" || decision.action.kind === "stop") {
       this.pending = null;
@@ -521,10 +545,10 @@ export class Session {
       step.result = this.report("Stopped", "ok");
       return step;
     }
-    if (decision.route === "hermes" && this.deps.brain) return this.runBrain(step, command);
+    if (decision.route === "hermes" && this.brainFor) return this.runBrain(step, said);
     if (decision.action.kind === "open_app") {
       if (!this.deps.computer) {
-        if (this.deps.brain) return this.runBrain(step, command);
+        if (this.brainFor) return this.runBrain(step, said);
         step.result = this.report(`I can't open apps from here yet (${decision.action.app})`, "warn");
         return step;
       }
@@ -538,7 +562,7 @@ export class Session {
       return step;
     }
     if (decision.action.kind === "none") {
-      step.result = this.report(decision.action.reason, "warn");
+      step.result = this.report(decision.route === "hermes" && this.localOnly ? "That needs the assistant, not the browser: ask the user directly" : decision.action.reason, "warn");
       return step;
     }
     if (decision.needsConfirmation) {

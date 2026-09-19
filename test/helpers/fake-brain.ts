@@ -57,3 +57,12 @@ export class FakeBrain implements Brain {
 
 /** Let queued microtasks / background consumers run. */
 export const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+
+/** Poll until `cond` holds (HTTP round trips under a loaded test runner take a few ticks). */
+export async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}

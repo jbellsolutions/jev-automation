@@ -358,7 +358,7 @@ describe("Session: brain lane (Hermes)", () => {
     expect(messages.some((m) => m.type === "steps")).toBe(false);
     expect(r.ok).toBe(true);
     expect(r.steps).toHaveLength(1);
-    expect(r.steps[0]!.decision).toMatchObject({ route: "hermes" });
+    expect(r.steps[0]!.decision).toMatchObject({ route: "hermes", actionLabel: "Ask Hermes" });
     expect(r.steps[0]!.result).toEqual({ text: "Hermes is on it", level: "ok" });
     // the queue is free: a browser command runs while the brain works
     brain.emit("run_1", { kind: "tool_start", tool: "web_search", preview: "dentists austin" });
@@ -472,6 +472,19 @@ describe("Session: brain lane (Hermes)", () => {
     const noMac = withBrain();
     await noMac.session.command("open slack");
     expect(noMac.brain.sent).toEqual(["open slack"]);
+  });
+
+  it("local commands (the brain's own jev_browse) never reach the brain", async () => {
+    const { session, brain, executor } = withBrain();
+    const r = await session.command("find me 20 dentists in austin and put them in a sheet", { local: true });
+    expect(brain.sent).toEqual([]);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["search"]); // split into browser steps instead
+    expect(r.steps[0]!.command).toBe("find me 20 dentists in austin");
+    const w = await session.command("what did I ask you yesterday", { local: true });
+    expect(w.steps[0]!.result).toMatchObject({ level: "warn", text: /needs the assistant/ });
+    expect(brain.sent).toEqual([]);
+    await session.command("what did I ask you yesterday");
+    expect(brain.sent).toEqual(["what did I ask you yesterday"]);
   });
 
   it("without a brain, hermes-routed commands fall back to the browser action or a warning", async () => {

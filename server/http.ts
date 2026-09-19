@@ -38,12 +38,14 @@ export function createApi({ hub, auth, decider }: ApiDeps): Router {
     res.json({ default: hub.defaultId, sessions: await hub.statuses() });
   });
 
+  /** Browser/Mac only: the brain's own jev_browse tool comes through here, so a command must
+   *  never bounce back into the brain. Use /ask for that. */
   api.post("/command", async (req, res) => {
     const { text, session: id } = (req.body ?? {}) as { text?: unknown; session?: unknown };
     if (typeof text !== "string" || !text.trim()) return void res.status(400).json({ error: "text is required" });
     const session = resolve(res, id);
     if (!session) return;
-    res.json(await session.command(text));
+    res.json(await session.command(text, { local: true }));
   });
 
   api.post("/reply", async (req, res) => {

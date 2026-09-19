@@ -3,7 +3,7 @@ import { WebSocket } from "ws";
 import { HeuristicDecider } from "../core/decide.js";
 import type { CommandResult } from "../core/results.js";
 import { type Companion, createCompanion } from "../server/companion.js";
-import { FakeBrain, tick } from "./helpers/fake-brain.js";
+import { FakeBrain, tick, waitFor } from "./helpers/fake-brain.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
 const TOKEN = "test-token-123";
@@ -89,8 +89,7 @@ describe("HTTP API", () => {
     const brain = new FakeBrain();
     const { post } = await boot({ brain });
     const asking = post("/api/ask", { text: "what's on my calendar" });
-    await tick();
-    await tick();
+    await waitFor(() => brain.sent.length === 1);
     expect(brain.sent).toEqual(["what's on my calendar"]);
     brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
     await tick();
