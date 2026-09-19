@@ -6,10 +6,12 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
+import type { Brain } from "../core/brain.js";
 import type { Decider } from "../core/decide.js";
 import type { Executor } from "../core/executor.js";
 import type { Speaker } from "../core/speak.js";
 import type { ClientMessage } from "../core/protocol.js";
+import type { Computer } from "../core/session.js";
 import { type Auth, allowedOrigins, createAuth, socketAllowed } from "./auth.js";
 import { demoPage } from "./demo.js";
 import { createApi } from "./http.js";
@@ -30,6 +32,10 @@ export interface CompanionOptions {
   stt?: SttProvider | null;
   /** Reads replies to voice commands aloud. */
   speaker?: Speaker | null;
+  /** The agent behind the `hermes` route (Hermes); without one such commands stay local. */
+  brain?: Brain | null;
+  /** The Mac lane (open apps); without one "open slack" goes to the brain or is refused. */
+  computer?: Computer | null;
 }
 
 export interface Companion {
@@ -49,6 +55,8 @@ export function createCompanion(opts: CompanionOptions): Companion {
     defaultSession: opts.defaultSession,
     sttProvider: opts.stt?.name ?? null,
     speaker: opts.speaker,
+    brain: opts.brain,
+    computer: opts.computer,
   });
 
   const app = express();
@@ -98,6 +106,9 @@ export function createCompanion(opts: CompanionOptions): Companion {
           break;
         case "pick":
           void session.pick(String(msg.elementId));
+          break;
+        case "approval_reply":
+          if (["once", "session", "always", "deny"].includes(String(msg.choice))) void session.approve(msg.choice);
           break;
         case "click_at":
           void session.clickAt(Number(msg.fx), Number(msg.fy));

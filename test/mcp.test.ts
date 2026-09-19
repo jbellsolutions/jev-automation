@@ -3,19 +3,19 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { HeuristicDecider } from "../core/decide.js";
 import { type Companion, createCompanion } from "../server/companion.js";
-import { createJevMcpServer, renderResult } from "../server/mcp.js";
+import { baseUrlCandidates, createJevMcpServer, renderResult } from "../server/mcp.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
 const TOKEN = "t";
 let companion: Companion | null = null;
 let client: Client | null = null;
 
-async function boot(elements: Parameters<typeof el>[1][] = [], token: string | undefined = TOKEN) {
+async function boot(elements: Parameters<typeof el>[1][] = [], token: string | undefined = TOKEN, baseUrl?: (port: number) => string) {
   const executor = new FakeExecutor(elements.map((o, i) => el(`e${i}`, o)), "playwright");
   companion = createCompanion({ decider: new HeuristicDecider(), token: TOKEN });
   const port = await companion.listen(0);
   companion.register(executor);
-  const server = createJevMcpServer({ baseUrl: `http://127.0.0.1:${port}`, token });
+  const server = createJevMcpServer({ baseUrl: baseUrl ? baseUrl(port) : `http://127.0.0.1:${port}`, token });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   client = new Client({ name: "test", version: "0" });
@@ -51,15 +51,28 @@ describe("MCP server", () => {
     expect(r.data).toMatchObject({ ok: true });
   });
 
-  it("surfaces a confirmation and resolves it with jev_reply", async () => {
+  it("surfaces a confirmation that only the user can give; jev_reply may cancel it", async () => {
     const { executor, call } = await boot([{ tag: "button", text: "Delete account" }]);
     const first = await call("jev_browse", { command: "click delete account" });
-    expect(first.text).toMatch(/Waiting for confirmation: Click button "Delete account"/);
-    expect(first.text).toMatch(/jev_reply with \{"ok": true\}/);
+    expect(first.text).toMatch(/Waiting for the user's confirmation: Click button "Delete account"/);
+    expect(first.text).toMatch(/Only the user can confirm/);
     expect(executor.executed).toEqual([]);
-    const second = await call("jev_reply", { ok: true });
-    expect(second.isError).toBe(false);
-    expect(executor.executed).toHaveLength(1);
+    const refused = await call("jev_reply", { ok: true });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toMatch(/Only the user can confirm "Click button "Delete account""/);
+    expect(executor.executed).toEqual([]);
+    const cancelled = await call("jev_reply", { ok: false });
+    expect(cancelled.isError).toBe(false);
+    expect(cancelled.text).toMatch(/Cancelled: Click button/);
+    expect(executor.executed).toEqual([]);
+    const status = await call("jev_status");
+    expect(status.text).not.toMatch(/waiting/);
+  });
+
+  it("jev_reply {ok: true} still works when nothing risky is pending", async () => {
+    const { call } = await boot();
+    const r = await call("jev_reply", { ok: true });
+    expect(r.isError).toBe(false);
   });
 
   it("surfaces a clarification with element ids and accepts a pick", async () => {
@@ -69,6 +82,14 @@ describe("MCP server", () => {
     expect(first.text).toMatch(/e1: link "Pricing FAQ"/);
     await call("jev_reply", { pick: "e2" });
     expect(executor.executed).toEqual([{ kind: "click", elementId: "e2", label: 'link "Pricing plans" → /plans' }]);
+  });
+
+  it("tries several companion URLs and uses the first one that answers", async () => {
+    const { call } = await boot([], TOKEN, (port) => `http://127.0.0.1:1, http://127.0.0.1:${port}/`);
+    const r = await call("jev_status");
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/- playwright/);
+    expect(baseUrlCandidates("http://a:1/,, http://b:2 ")).toEqual(["http://a:1", "http://b:2"]);
   });
 
   it("jev_status reports sessions and Jev mode", async () => {

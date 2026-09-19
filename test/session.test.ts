@@ -3,6 +3,7 @@ import { HeuristicDecider } from "../core/decide.js";
 import type { PageElement } from "../core/elements.js";
 import type { ServerMessage } from "../core/protocol.js";
 import { Session } from "../core/session.js";
+import { FakeBrain, tick } from "./helpers/fake-brain.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
 function make(elements: PageElement[] = []) {
@@ -179,7 +180,7 @@ describe("Session: multi-step utterances", () => {
   it("runs each step against a fresh snapshot and announces the split", async () => {
     const { session, executor, messages } = make();
     const r = await session.command("open a.com and then open b.com and scroll down");
-    expect(executor.snapshots).toBe(6); // one before and one after each step
+    expect(executor.snapshots).toBe(7); // one to route the whole utterance, then one before and one after each step
     expect(executor.executed.map((a) => a.kind)).toEqual(["navigate", "navigate", "scroll"]);
     expect(r.ok).toBe(true);
     expect(r.steps.map((s) => s.command)).toEqual(["open a.com", "open b.com", "scroll down"]);
@@ -304,7 +305,7 @@ describe("Session: verification in sequences", () => {
     const executor = new FakeExecutor();
     const session = new Session("fake", { executor, decider: new HeuristicDecider(), verify: "off" });
     const r = await session.command("open a.com and scroll down");
-    expect(executor.snapshots).toBe(2);
+    expect(executor.snapshots).toBe(3); // route + one per step
     expect(r.steps.every((s) => s.verify === undefined)).toBe(true);
   });
 });
@@ -326,5 +327,161 @@ describe("Session: held actions are verified too", () => {
     const r = await session.reply(true);
     expect(executor.executed.map((a) => a.kind)).toEqual(["click", "scroll"]);
     expect(r.steps[0]!.verify).toMatchObject({ done: true });
+  });
+});
+
+describe("Session: brain lane (Hermes)", () => {
+  class FakeSpeaker {
+    said: string[] = [];
+    stopped = 0;
+    async speak(text: string) { this.said.push(text); }
+    stop() { this.stopped++; }
+  }
+  function withBrain(opts: { speaker?: boolean; computer?: boolean } = {}) {
+    const executor = new FakeExecutor([el("e0", { text: "Pricing", hrefShort: "/pricing" })]);
+    const brain = new FakeBrain();
+    const speaker = opts.speaker ? new FakeSpeaker() : null;
+    const opened: string[] = [];
+    const computer = opts.computer ? { openApp: async (app: string) => { opened.push(app); return `Opened ${app}`; } } : null;
+    const messages: ServerMessage[] = [];
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, computer });
+    session.subscribe((m) => messages.push(m));
+    const brainEvents = () => messages.filter((m): m is Extract<ServerMessage, { type: "brain_event" }> => m.type === "brain_event").map((m) => m.event.kind);
+    return { executor, brain, speaker, opened, session, messages, brainEvents };
+  }
+
+  it("sends a question to the brain in one piece and streams its events outside the queue", async () => {
+    const { session, brain, executor, messages, brainEvents } = withBrain();
+    const r = await session.command("find me 20 dentists in austin and put them in a sheet");
+    expect(brain.sent).toEqual(["find me 20 dentists in austin and put them in a sheet"]);
+    expect(executor.executed).toEqual([]);
+    expect(messages.some((m) => m.type === "steps")).toBe(false);
+    expect(r.ok).toBe(true);
+    expect(r.steps).toHaveLength(1);
+    expect(r.steps[0]!.decision).toMatchObject({ route: "hermes" });
+    expect(r.steps[0]!.result).toEqual({ text: "Hermes is on it", level: "ok" });
+    // the queue is free: a browser command runs while the brain works
+    brain.emit("run_1", { kind: "tool_start", tool: "web_search", preview: "dentists austin" });
+    const b = await session.command("click pricing");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
+    expect(b.ok).toBe(true);
+    brain.emit("run_1", { kind: "tool_end", tool: "web_search", durationMs: 800, error: false }, { kind: "completed", output: "Done: 20 dentists in the sheet." }, null);
+    await tick();
+    expect(brainEvents()).toEqual(["tool_start", "tool_end", "completed"]);
+    const ev = messages.find((m) => m.type === "brain_event")!;
+    expect(ev).toMatchObject({ stepId: r.steps[0]!.stepId, runId: "run_1" });
+  });
+
+  it("speaks an acknowledgement and the final answer when the command came by voice", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    await session.command("what's on my calendar today", { speak: true });
+    expect(speaker!.said).toEqual(["On it."]);
+    brain.emit("run_1", { kind: "delta", text: "Two meetings" }, { kind: "completed", output: "**Two meetings**: standup at 9 and lunch with Sam at noon." }, null);
+    await tick();
+    expect(speaker!.said.at(-1)).toBe("Two meetings: standup at 9 and lunch with Sam at noon.");
+  });
+
+  it("asks the human when the brain wants approval, and a spoken yes/no answers it", async () => {
+    const { session, brain, speaker, messages } = withBrain({ speaker: true });
+    await session.command("clean up my downloads folder", { speak: true });
+    brain.emit("run_1", { kind: "approval", requestId: "req1", summary: "run rm -rf ~/Downloads/*", choices: ["once", "session", "always", "deny"] });
+    await tick();
+    expect(session.pendingSummary()).toEqual({ kind: "approval", question: "Hermes wants to run rm -rf ~/Downloads/*. Allow it?", choices: ["once", "session", "always", "deny"] });
+    expect(speaker!.said.at(-1)).toBe("Hermes wants to run rm -rf ~/Downloads/. Allow it?"); // markdown-ish glyphs are not read aloud
+    expect((await session.status()).pending?.kind).toBe("approval");
+    const r = await session.command("yes, always", { speak: true });
+    expect(brain.approvals).toEqual([{ runId: "run_1", choice: "always", requestId: "req1" }]);
+    expect(r.steps[0]!.result).toEqual({ text: "Allowed: run rm -rf ~/Downloads/*", level: "ok" });
+    await tick();
+    expect(session.pendingSummary()).toBeNull();
+    expect(messages.filter((m) => m.type === "brain_event").map((m) => (m as { event: { kind: string } }).event.kind)).toEqual(["approval", "approved"]);
+  });
+
+  it("a spoken no denies; a UI choice works too; an unrelated command leaves the request open", async () => {
+    const { session, brain, executor } = withBrain();
+    await session.command("tidy up");
+    brain.emit("run_1", { kind: "approval", requestId: null, summary: "delete old logs", choices: ["once", "deny"] });
+    await tick();
+    const r = await session.command("scroll down");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["scroll"]);
+    expect(r.pending?.kind).toBe("approval"); // still waiting
+    await session.command("no thanks");
+    expect(brain.approvals).toEqual([{ runId: "run_1", choice: "deny", requestId: null }]);
+    brain.emit("run_1", { kind: "approval", requestId: "r2", summary: "try again", choices: ["once", "deny"] });
+    await tick();
+    const ui = await session.approve("once");
+    expect(ui.steps[0]!.result?.text).toBe("Allowed: try again");
+    expect(brain.approvals.at(-1)).toEqual({ runId: "run_1", choice: "once", requestId: "r2" });
+  });
+
+  it("stop halts the brain run as well as local work; cancel() too", async () => {
+    const { session, brain, speaker } = withBrain({ speaker: true });
+    await session.command("research quantum computing for me");
+    const r = await session.command("stop", { speak: true });
+    expect(r.steps[0]!.result).toEqual({ text: "Stopped", level: "ok" });
+    expect(brain.stops).toEqual(["run_1"]);
+    await tick();
+    await session.command("write me a poem");
+    session.cancel();
+    expect(brain.stops).toEqual(["run_1", "run_2"]);
+    expect(speaker!.stopped).toBeGreaterThan(0);
+  });
+
+  it("a second brain-bound utterance while a run is active steers it", async () => {
+    const { session, brain } = withBrain();
+    await session.command("find me a hotel in paris");
+    const r = await session.command("make it one near the louvre");
+    expect(brain.sent).toEqual(["find me a hotel in paris"]);
+    expect(brain.steers).toEqual([{ runId: "run_1", text: "make it one near the louvre" }]);
+    expect(r.steps[0]!.result).toEqual({ text: "Told Hermes: make it one near the louvre", level: "ok" });
+    brain.emit("run_1", { kind: "completed", output: "Booked." }, null);
+    await tick();
+    await session.command("find me a train too");
+    expect(brain.sent).toHaveLength(2);
+  });
+
+  it("ask() waits for the brain's answer; a failed run is reported", async () => {
+    const { session, brain } = withBrain();
+    const p = session.ask("what time is it in tokyo");
+    await tick();
+    brain.emit("run_1", { kind: "completed", output: "It is 9 am in Tokyo." }, null);
+    expect(await p).toMatchObject({ ok: true, output: "It is 9 am in Tokyo." });
+    const q = session.ask("and in lima");
+    await tick();
+    brain.emit("run_2", { kind: "failed", error: "model timeout" }, null);
+    expect(await q).toMatchObject({ ok: false, output: "model timeout" });
+    const local = await session.ask("scroll down");
+    expect(local.output).toBe("did scroll");
+  });
+
+  it("an unreachable brain is an error, not a hang", async () => {
+    const { session, brain } = withBrain();
+    brain.failSend = "Hermes API unreachable at http://127.0.0.1:8642";
+    const r = await session.command("what did I ask you yesterday");
+    expect(r.ok).toBe(false);
+    expect(r.steps[0]!.result).toMatchObject({ level: "error", text: /unreachable/ });
+  });
+
+  it("opens apps through the computer lane, or hands them to the brain without one", async () => {
+    const withMac = withBrain({ computer: true });
+    const r = await withMac.session.command("open slack");
+    expect(withMac.opened).toEqual(["slack"]);
+    expect(r.steps[0]!.result).toEqual({ text: "Opened slack", level: "ok" });
+    expect(r.steps[0]!.decision).toMatchObject({ route: "computer", action: { kind: "open_app", app: "slack" } });
+    expect(withMac.brain.sent).toEqual([]);
+    const noMac = withBrain();
+    await noMac.session.command("open slack");
+    expect(noMac.brain.sent).toEqual(["open slack"]);
+  });
+
+  it("without a brain, hermes-routed commands fall back to the browser action or a warning", async () => {
+    const { session, executor } = make();
+    const r = await session.command("find me 20 dentists in austin");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["search"]);
+    expect(r.steps[0]!.decision).toMatchObject({ route: "hermes" });
+    const w = await session.command("what did I ask you yesterday");
+    expect(w.steps[0]!.result?.level).toBe("warn");
+    const mac = await session.command("open slack");
+    expect(mac.steps[0]!.result).toMatchObject({ level: "warn", text: /can't open apps/ });
   });
 });

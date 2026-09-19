@@ -1,4 +1,5 @@
 import type { LogEntry } from "../state.ts";
+import { HermesCard } from "./HermesCard.tsx";
 
 const resultColor: Record<string, string | undefined> = { error: "var(--danger)", warn: "var(--warn)", ok: "var(--accent-2)" };
 
@@ -15,6 +16,7 @@ function Entry({ entry }: { entry: LogEntry }) {
       {d && (
         <div className="meta">
           <span className={`tag ${d.source}`}>{d.source === "jev" ? d.model || "jev" : "heuristic"}</span>
+          {d.route && d.route !== "browser_now" && <span className={`tag route ${d.route}`}>{d.route === "hermes" ? "→ Hermes" : d.route}{d.routeConfidence ? ` ${Math.round(d.routeConfidence * 100)}%` : ""}</span>}
           <span className="tag">intent: {d.intent} {Math.round(d.intentConfidence * 100)}%</span>
           {d.targetConfidence != null && <span className="tag">target {Math.round(d.targetConfidence * 100)}%</span>}
           {d.risky != null && d.risky >= 0.6 && <span className="tag risk">risky {Math.round(d.risky * 100)}%</span>}
@@ -22,6 +24,7 @@ function Entry({ entry }: { entry: LogEntry }) {
           <div className="bar"><span style={{ width: `${Math.round(d.intentConfidence * 100)}%` }} /></div>
         </div>
       )}
+      {entry.brain && <HermesCard brain={entry.brain} />}
       {d && entry.result && (
         <div className="result muted" style={{ color: resultColor[entry.result.level] }}>
           {entry.result.text}

@@ -29,7 +29,7 @@ const noulAnswer = (noul: number) => ({ type: "noul" as const, noul });
 describe("buildQuestions", () => {
   it("fans out every question in one request and lists page elements as options", () => {
     const q = buildQuestions(parseCommand("click on pricing"), snapshot);
-    expect(Object.keys(q).sort()).toEqual(["intent", "risky", "scroll_direction", "submit_after_typing", "target"]);
+    expect(Object.keys(q).sort()).toEqual(["intent", "risky", "route", "scroll_direction", "submit_after_typing", "target"]);
     const target = q.target!;
     expect(target.type).toBe("choice");
     if (target.type === "choice") {

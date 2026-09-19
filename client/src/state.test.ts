@@ -9,6 +9,43 @@ const decision: DecisionSummary = {
   actionLabel: 'Click link "Pricing"', source: "jev", model: "jev-1.13.0", latencyMs: 120, inputTokens: 300,
 };
 
+describe("reducer: brain events", () => {
+  const hermes: DecisionSummary = { ...decision, command: "what's on my calendar", intent: "unclear", route: "hermes", routeConfidence: 0.9, action: { kind: "none", reason: "" }, actionLabel: "Ask Hermes" };
+  const start: Event[] = [
+    { type: "transcript_ack", text: "what's on my calendar", stepId: 7 },
+    { type: "decision", decision: hermes },
+    { type: "status", text: "Hermes is on it", level: "ok" },
+    { type: "transcript_ack", text: "scroll down", stepId: 8 },
+    { type: "status", text: "Scrolled down", level: "ok" },
+  ];
+
+  it("attaches streamed text and tools to the step's entry, not the latest one", () => {
+    const s = run([
+      ...start,
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "tool_start", tool: "gcal", preview: "today" } },
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "tool_end", tool: "gcal", durationMs: 400, error: false } },
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "delta", text: "Two " } },
+      { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "delta", text: "meetings" } },
+    ]);
+    expect(s.entries[0]!.brain).toBeUndefined();
+    expect(s.entries[1]!.brain).toEqual({ runId: "run_1", text: "Two meetings", tools: [{ tool: "gcal", preview: "today", durationMs: 400, error: false }], state: "running" });
+    const done = reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "completed", output: "Two meetings today.\nStandup at 9." } });
+    expect(done.entries[1]!.brain?.state).toBe("completed");
+    expect(done.entries[1]!.result).toEqual({ text: "Two meetings today.", level: "ok" });
+    expect(done.status).toEqual({ text: "Hermes: done", level: "ok" });
+  });
+
+  it("raises and clears the approval card", () => {
+    const s = run([...start, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] } }]);
+    expect(s.pending).toEqual({ kind: "approval", runId: "run_1", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
+    expect(s.entries[1]!.brain?.state).toBe("waiting");
+    // a browser outcome does not dismiss it; the brain's own events do
+    expect(reducer(s, { type: "status", text: "Scrolled", level: "ok" }).pending?.kind).toBe("approval");
+    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approved", choice: "once" } }).pending).toBeNull();
+    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "failed", error: "boom" } })).toMatchObject({ pending: null, status: { level: "error" } });
+  });
+});
+
 describe("reducer", () => {
   it("tracks connection and hello", () => {
     const s = run([{ type: "socket", connected: true }, { type: "hello", jev: { enabled: true, model: "jev-latest" }, viewport: { width: 1000, height: 600 }, stt: { provider: "deepgram" } }]);

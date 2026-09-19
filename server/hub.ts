@@ -2,12 +2,13 @@
  *  attached to it, streaming JPEG frames when the executor can produce them. */
 import { createHash } from "node:crypto";
 import { WebSocket } from "ws";
+import type { Brain } from "../core/brain.js";
 import type { Decider } from "../core/decide.js";
 import type { Speaker } from "../core/speak.js";
 import type { Executor } from "../core/executor.js";
 import type { ServerMessage } from "../core/protocol.js";
 import type { SessionStatus } from "../core/results.js";
-import { Session } from "../core/session.js";
+import { type Computer, Session } from "../core/session.js";
 
 /** Pushes a frame when the surface changed (or every interval as a safety net), skipping
  *  frames identical to the last one so an idle page costs nothing. */
@@ -70,6 +71,8 @@ export interface HubOptions {
   /** Name of the streaming STT provider, announced to UIs so they can pick voice input. */
   sttProvider?: string | null;
   speaker?: Speaker | null;
+  brain?: Brain | null;
+  computer?: Computer | null;
 }
 
 export class Hub {
@@ -83,7 +86,14 @@ export class Hub {
     if (this.entries.has(id)) throw new Error(`Session ${id} already registered`);
     const clients = new Set<WebSocket>();
     const streamer = new FrameStreamer(executor, (msg) => this.broadcast(id, msg), this.opts.screenshotIntervalMs);
-    const session = new Session(id, { executor, decider: this.opts.decider, speaker: this.opts.speaker, afterAction: () => streamer.push(true) });
+    const session = new Session(id, {
+      executor,
+      decider: this.opts.decider,
+      speaker: this.opts.speaker,
+      brain: this.opts.brain,
+      computer: this.opts.computer,
+      afterAction: () => streamer.push(true),
+    });
     const unsubSession = session.subscribe((msg) => this.broadcast(id, msg));
     const unsubChange = executor.onChange(() => streamer.markDirty());
     this.entries.set(id, {

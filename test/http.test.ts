@@ -3,14 +3,15 @@ import { WebSocket } from "ws";
 import { HeuristicDecider } from "../core/decide.js";
 import type { CommandResult } from "../core/results.js";
 import { type Companion, createCompanion } from "../server/companion.js";
+import { FakeBrain, tick } from "./helpers/fake-brain.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
 
 const TOKEN = "test-token-123";
 let companion: Companion | null = null;
 
-async function boot(opts: { token?: string; elements?: Parameters<typeof el>[1][] } = {}) {
+async function boot(opts: { token?: string; elements?: Parameters<typeof el>[1][]; brain?: FakeBrain } = {}) {
   const executor = new FakeExecutor((opts.elements ?? []).map((o, i) => el(`e${i}`, o)), "playwright");
-  companion = createCompanion({ decider: new HeuristicDecider(), token: "token" in opts ? opts.token : TOKEN });
+  companion = createCompanion({ decider: new HeuristicDecider(), token: "token" in opts ? opts.token : TOKEN, brain: opts.brain });
   const port = await companion.listen(0);
   companion.register(executor);
   const base = `http://127.0.0.1:${port}`;
@@ -82,6 +83,26 @@ describe("HTTP API", () => {
     expect((await post("/api/command", {})).status).toBe(400);
     expect((await post("/api/command", { text: "open a.com", session: "mars" })).status).toBe(404);
     expect((await post("/api/reply", {})).status).toBe(400);
+  });
+
+  it("/api/ask waits for the brain's answer and /api/approve answers its requests", async () => {
+    const brain = new FakeBrain();
+    const { post } = await boot({ brain });
+    const asking = post("/api/ask", { text: "what's on my calendar" });
+    await tick();
+    await tick();
+    expect(brain.sent).toEqual(["what's on my calendar"]);
+    brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
+    await tick();
+    const bad = await post("/api/approve", { choice: "maybe" });
+    expect(bad.status).toBe(400);
+    const okRes = await post("/api/approve", { choice: "once" });
+    expect(okRes.status).toBe(200);
+    expect(brain.approvals).toEqual([{ runId: "run_1", choice: "once", requestId: "r1" }]);
+    brain.emit("run_1", { kind: "completed", output: "Two meetings." }, null);
+    const body = (await (await asking).json()) as CommandResult & { output: string };
+    expect(body).toMatchObject({ ok: true, output: "Two meetings." });
+    expect(body.steps[0]!.decision?.route).toBe("hermes");
   });
 
   it("lists sessions", async () => {

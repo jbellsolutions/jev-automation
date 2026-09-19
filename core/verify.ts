@@ -102,6 +102,8 @@ export function defaultExpectation(a: Action): string {
       return "the next page is shown";
     case "reload":
       return "the page reloaded";
+    case "open_app":
+      return `${a.app} is running and in front`;
     case "stop":
     case "none":
       return "nothing needed to happen";
@@ -154,6 +156,7 @@ export function quickVerdict(s: VerifyState, a: Action): VerifyResult | null {
     case "reload":
     case "scroll":
     case "stop":
+    case "open_app":
     case "none":
       return verdict(true, false, "none", "code");
     case "type":

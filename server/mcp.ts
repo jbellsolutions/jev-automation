@@ -2,7 +2,9 @@
  *  thin HTTP client of a running companion — it never owns a browser — so one process keeps
  *  owning each surface and every caller sees the same session state.
  *
- *  Register:  claude mcp add jev -e JEV_TOKEN=... -- npx tsx /path/to/server/mcp.ts */
+ *  Register:  claude mcp add jev -e JEV_TOKEN=... -- npx tsx /path/to/server/mcp.ts
+ *  (or as a stdio entry under mcp_servers in ~/.hermes/config.yaml so Hermes gets these tools).
+ *  JEV_SERVER_URL may list several companions, comma separated; the first one up is used. */
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -10,19 +12,47 @@ import { z } from "zod";
 import type { CommandResult, SessionStatus } from "../core/results.js";
 
 export interface McpOptions {
+  /** One base URL, or several separated by commas: the first one whose /api/health answers is
+   *  used (the desktop app listens on 3111, `npm start` on 3000). */
   baseUrl: string;
   token: string | undefined;
   fetch?: typeof fetch;
 }
 
+export function baseUrlCandidates(spec: string): string[] {
+  return spec
+    .split(",")
+    .map((u) => u.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 class CompanionClient {
   private readonly fetchImpl: typeof fetch;
+  private readonly candidates: string[];
+  private base: string | null = null;
   constructor(private readonly opts: McpOptions) {
     this.fetchImpl = opts.fetch ?? fetch;
+    this.candidates = baseUrlCandidates(opts.baseUrl);
+    if (this.candidates.length === 1) this.base = this.candidates[0]!;
+  }
+
+  /** Probe the candidates in order; remembered until one fails to answer. */
+  private async resolveBase(): Promise<string> {
+    if (this.base) return this.base;
+    for (const url of this.candidates) {
+      try {
+        const res = await this.fetchImpl(`${url}/api/health`, { signal: AbortSignal.timeout(1500) });
+        if (res.ok) return (this.base = url);
+      } catch {
+        /* next */
+      }
+    }
+    throw new Error(`companion unreachable at ${this.candidates.join(" or ")}. Is it running (npm run app, or npm start)?`);
   }
 
   private async request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
-    const res = await this.fetchImpl(this.opts.baseUrl.replace(/\/$/, "") + path, {
+    const base = await this.resolveBase();
+    const res = await this.fetchImpl(base + path, {
       method,
       headers: {
         "content-type": "application/json",
@@ -30,7 +60,8 @@ class CompanionClient {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     }).catch((err: unknown) => {
-      throw new Error(`companion unreachable at ${this.opts.baseUrl}: ${err instanceof Error ? err.message : String(err)}. Is it running (npm start)?`);
+      if (this.candidates.length > 1) this.base = null; // re-probe next time
+      throw new Error(`companion unreachable at ${base}: ${err instanceof Error ? err.message : String(err)}. Is it running (npm start)?`);
     });
     const text = await res.text();
     let data: unknown = null;
@@ -78,8 +109,10 @@ export function renderResult(r: CommandResult): string {
     lines.push(`${head}"${s.command}" ${did}${how}${out}${checked}`.trim());
   });
   if (r.pending?.kind === "confirm") {
-    lines.push(`⚠ Waiting for confirmation: ${r.pending.actionLabel} — ${r.pending.reason}`);
-    lines.push(`Call jev_reply with {"ok": true} to proceed or {"ok": false} to cancel.`);
+    lines.push(`⚠ Waiting for the user's confirmation: ${r.pending.actionLabel} — ${r.pending.reason}`);
+    lines.push(`Only the user can confirm this, in the Jev panel or by voice; tell them what is waiting. Call jev_reply with {"ok": false} to cancel it instead. Retrying with {"ok": true} will not work.`);
+  } else if (r.pending?.kind === "approval") {
+    lines.push(`⚠ ${r.pending.question} (waiting for the user)`);
   } else if (r.pending?.kind === "clarify") {
     lines.push(`? ${r.pending.question}`);
     for (const o of r.pending.options) lines.push(`   ${o.elementId}: ${o.label} (${pct(o.probability)})`);
@@ -121,11 +154,19 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
     "jev_reply",
     {
       title: "Answer a pending Jev question",
-      description: "Resolve a pending confirmation ({ok: true|false}) or clarification ({pick: elementId}) left by jev_browse. Any parked steps of a multi-step command continue after a yes/pick.",
+      description:
+        "Resolve a pending clarification ({pick: elementId}) left by jev_browse, or cancel a pending confirmation ({ok: false}). Confirming a risky action ({ok: true}) is reserved for the user, who answers in the Jev panel or by voice. Any parked steps of a multi-step command continue after a pick.",
       inputSchema: { ok: z.boolean().optional(), pick: z.string().optional().describe("Element id from the clarification options, e.g. e3"), session: sessionArg },
     },
     async ({ ok: yes, pick, session }) => {
       try {
+        if (yes === true) {
+          const { sessions, default: def } = await client.sessions();
+          const target = sessions.find((s) => s.id === (session ?? def));
+          if (target?.pending && target.pending.kind !== "clarify") {
+            return fail(new Error(`Only the user can confirm "${target.pending.kind === "confirm" ? target.pending.actionLabel : target.pending.question}" — in the Jev panel or by voice. Tell them it is waiting; do not retry. {"ok": false} cancels it.`));
+          }
+        }
         const r = await client.reply({ ok: yes, pick, session });
         return ok(renderResult(r), r as unknown as Record<string, unknown>);
       } catch (err) {
@@ -140,6 +181,7 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
       title: "Jev assistant status",
       description: "Which surfaces (sessions) are connected, what page each is on, whether one is busy or waiting on a question, and whether Jev itself is enabled.",
       inputSchema: {},
+      annotations: { readOnlyHint: true },
     },
     async () => {
       try {
@@ -147,7 +189,7 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
         const lines = [
           `Jev: ${health.jev.enabled ? `enabled (${health.jev.model})` : "disabled — keyword heuristics"}`,
           `Default session: ${sessions.default ?? "none"}`,
-          ...sessions.sessions.map((s) => `- ${s.id} (${s.kind}) ${s.busy ? "busy" : "idle"}${s.pending ? ` · waiting: ${s.pending.kind}` : ""} · ${s.title ? `${s.title} — ` : ""}${s.url}`),
+          ...sessions.sessions.map((s) => `- ${s.id} (${s.kind}) ${s.busy ? "busy" : "idle"}${s.pending ? ` · waiting for the user: ${s.pending.kind}` : ""} · ${s.title ? `${s.title} — ` : ""}${s.url}`),
         ];
         return ok(lines.join("\n"), { ...health, ...sessions });
       } catch (err) {

@@ -269,6 +269,8 @@ export class PlaywrightExecutor implements Executor {
         return "Reloaded";
       case "stop":
         return "Stopped";
+      case "open_app":
+        throw new Error(`The browser can't open ${action.app}`);
       case "none":
         return action.reason;
     }

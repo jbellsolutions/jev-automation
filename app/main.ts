@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, Menu, Tray, app, globalShortcut, ipcMain, nativeImage, screen, session, systemPreferences } from "electron";
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "../server/companion.js";
+import { selectComputer } from "../server/computer.js";
+import { createBrain } from "../server/hermes.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { selectSpeaker } from "../server/speak/say.js";
 import { selectSttProvider } from "../server/stt/select.js";
@@ -133,6 +135,8 @@ async function main() {
   const decider = createDecider();
   const stt = selectSttProvider(process.env, { appleBin: path.join(root, "native", "jev-speech", "jev-speech") });
   const speaker = selectSpeaker();
+  const brain = createBrain();
+  const computer = selectComputer();
   const companion = createCompanion({
     decider,
     token: process.env.JEV_TOKEN,
@@ -140,7 +144,11 @@ async function main() {
     defaultSession: process.env.JEV_DEFAULT_SESSION,
     stt,
     speaker,
+    brain,
+    computer,
   });
+  if (brain) void brain.health().then((h) => console.log(h.ok ? `brain: Hermes (${h.detail})` : `brain: Hermes not reachable — ${h.detail}`));
+  else console.log("brain: none (set HERMES_API_KEY)");
   const port = await companion.listen(PORT);
   baseUrl = `http://127.0.0.1:${port}`;
   const playwright = new PlaywrightExecutor({

@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "./companion.js";
+import { selectComputer } from "./computer.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
+import { createBrain } from "./hermes.js";
 import { selectSpeaker } from "./speak/say.js";
 import { selectSttProvider } from "./stt/select.js";
 
@@ -19,6 +21,8 @@ const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 const decider = createDecider();
 const stt = selectSttProvider();
 const speaker = selectSpeaker();
+const brain = createBrain();
+const computer = selectComputer();
 const companion = createCompanion({
   decider,
   token: process.env.JEV_TOKEN,
@@ -26,6 +30,8 @@ const companion = createCompanion({
   defaultSession: process.env.JEV_DEFAULT_SESSION,
   stt,
   speaker,
+  brain,
+  computer,
 });
 const playwright = new PlaywrightExecutor({
   headless: HEADLESS,
@@ -47,6 +53,11 @@ async function main(): Promise<void> {
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
   console.log(stt ? `Voice in: streaming via ${stt.name}` : "Voice in: browser Web Speech (set DEEPGRAM_API_KEY or run npm run build:native for streaming transcription)");
   console.log(speaker ? "Voice out: macOS say" : "Voice out: off");
+  if (brain) {
+    const h = await brain.health();
+    console.log(h.ok ? `Brain: Hermes (${h.detail}) at ${process.env.HERMES_API_URL ?? "http://127.0.0.1:8642"}` : `Brain: Hermes configured but not reachable — ${h.detail}`);
+  } else console.log("Brain: none (set HERMES_API_KEY to route questions and tasks to Hermes)");
+  console.log(computer ? "Computer: open apps via open -a" : "Computer: off");
 }
 
 const shutdown = async () => {

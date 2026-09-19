@@ -15,6 +15,8 @@ export type Action =
   | { kind: "forward" }
   | { kind: "reload" }
   | { kind: "stop" }
+  /** Launch or switch to an application on the Mac (the computer lane, not the browser). */
+  | { kind: "open_app"; app: string }
   | { kind: "none"; reason: string };
 
 /** Short human-readable summary used in the UI log and confirmation prompts. */
@@ -42,6 +44,8 @@ export function describeAction(a: Action): string {
       return "Reload the page";
     case "stop":
       return "Stop";
+    case "open_app":
+      return `Open ${a.app}`;
     case "none":
       return a.reason;
   }

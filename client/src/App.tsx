@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { ApprovalCard } from "./components/ApprovalCard.tsx";
 import { ClarifyCard } from "./components/ClarifyCard.tsx";
 import { CommandInput } from "./components/CommandInput.tsx";
 import { ConfirmCard } from "./components/ConfirmCard.tsx";
@@ -75,6 +76,15 @@ export function App() {
               pending={state.pending}
               onReply={(ok) => {
                 send({ type: "confirm_reply", ok });
+                dispatch({ type: "dismiss_pending" });
+              }}
+            />
+          )}
+          {state.pending?.kind === "approval" && (
+            <ApprovalCard
+              pending={state.pending}
+              onChoose={(choice) => {
+                send({ type: "approval_reply", choice });
                 dispatch({ type: "dismiss_pending" });
               }}
             />

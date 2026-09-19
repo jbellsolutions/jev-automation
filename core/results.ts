@@ -1,5 +1,6 @@
 /** Shapes returned to programmatic callers (HTTP, MCP) and reported in status endpoints.
  *  The WebSocket UIs get the same information incrementally as ServerMessages. */
+import type { ApprovalChoice } from "./brain.js";
 import type { Alternative } from "./decide.js";
 import type { ExecutorCapabilities, ExecutorKind } from "./executor.js";
 import type { DecisionSummary, ServerMessage, VerifySummary } from "./protocol.js";
@@ -20,6 +21,8 @@ export interface StepResult {
 export type PendingSummary =
   | { kind: "confirm"; actionLabel: string; reason: string }
   | { kind: "clarify"; question: string; options: Alternative[] }
+  /** The brain wants a human to allow something; answer with approve(). */
+  | { kind: "approval"; question: string; choices: ApprovalChoice[] }
   | null;
 
 export interface CommandResult {

@@ -1,4 +1,5 @@
 /** All UI state in one place, derived purely from server messages + local events. */
+import type { ApprovalChoice, BrainEvent } from "../../core/brain.ts";
 import type { DecisionSummary, ServerMessage, VerifySummary } from "../../core/protocol.ts";
 
 export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
@@ -13,11 +14,22 @@ export interface LogEntry {
   decision: DecisionSummary | null;
   result: { text: string; level: StatusLevel } | null;
   verify?: VerifySummary;
+  /** Set once the step went to the brain: what it has said and done so far. */
+  brain?: BrainProgress;
+}
+
+export interface BrainProgress {
+  runId: string;
+  /** The assistant's reply, streamed. */
+  text: string;
+  tools: Array<{ tool: string; preview: string; durationMs?: number; error?: boolean }>;
+  state: "running" | "waiting" | "completed" | "failed" | "cancelled";
 }
 
 export type Pending =
   | { kind: "confirm"; actionLabel: string; reason: string }
   | { kind: "clarify"; question: string; options: Array<{ elementId: string; label: string; probability: number }> }
+  | { kind: "approval"; runId: string; question: string; choices: ApprovalChoice[] }
   | null;
 
 export interface State {
@@ -54,6 +66,79 @@ let nextId = 1;
 function updateLatest(entries: LogEntry[], patch: (e: LogEntry) => LogEntry): LogEntry[] {
   const [latest, ...rest] = entries;
   return latest ? [patch(latest), ...rest] : entries;
+}
+
+const MAX_BRAIN_TEXT = 4000;
+
+function progress(entry: LogEntry, runId: string, event: BrainEvent): BrainProgress {
+  const p: BrainProgress = entry.brain ?? { runId, text: "", tools: [], state: "running" };
+  switch (event.kind) {
+    case "delta":
+      return { ...p, text: (p.text + event.text).slice(-MAX_BRAIN_TEXT), state: "running" };
+    case "tool_start":
+      return { ...p, tools: [...p.tools, { tool: event.tool, preview: event.preview }], state: "running" };
+    case "tool_end": {
+      const tools = p.tools.slice();
+      for (let i = tools.length - 1; i >= 0; i--) {
+        if (tools[i]!.tool === event.tool && tools[i]!.durationMs === undefined) {
+          tools[i] = { ...tools[i]!, durationMs: event.durationMs, error: event.error };
+          break;
+        }
+      }
+      return { ...p, tools };
+    }
+    case "approval":
+      return { ...p, state: "waiting" };
+    case "approved":
+    case "steered":
+      return { ...p, state: "running" };
+    case "completed":
+      return { ...p, text: event.output || p.text, state: "completed" };
+    case "failed":
+      return { ...p, text: p.text ? `${p.text}\n\n${event.error}` : event.error, state: "failed" };
+    case "cancelled":
+      return { ...p, state: "cancelled" };
+    default:
+      return p;
+  }
+}
+
+/** Brain events attach to their step's entry by id (they land while later commands run) and
+ *  drive the approval card; the final answer becomes the entry's outcome. */
+function applyBrainEvent(state: State, stepId: number, runId: string, event: BrainEvent): State {
+  const idx = state.entries.findIndex((e) => e.stepId === stepId);
+  let entries = state.entries;
+  if (idx !== -1) {
+    entries = entries.slice();
+    const entry = entries[idx]!;
+    const brain = progress(entry, runId, event);
+    const result =
+      event.kind === "completed"
+        ? { text: firstLine(event.output) || "Done", level: "ok" as const }
+        : event.kind === "failed"
+          ? { text: event.error, level: "error" as const }
+          : event.kind === "cancelled"
+            ? { text: "Cancelled", level: "warn" as const }
+            : entry.result;
+    entries[idx] = { ...entry, brain, result };
+  }
+  let pending = state.pending;
+  let status = state.status;
+  if (event.kind === "approval") {
+    pending = { kind: "approval", runId, question: `Hermes wants to ${event.summary}. Allow it?`, choices: event.choices };
+    status = { text: "Hermes is waiting for your approval", level: "warn" };
+  } else if (pending?.kind === "approval" && pending.runId === runId && (event.kind === "approved" || event.kind === "completed" || event.kind === "failed" || event.kind === "cancelled")) {
+    pending = null;
+  }
+  if (event.kind === "completed") status = { text: "Hermes: done", level: "ok" };
+  else if (event.kind === "failed") status = { text: `Hermes: ${event.error}`, level: "error" };
+  else if (event.kind === "cancelled") status = { text: "Hermes: stopped", level: "warn" };
+  return { ...state, entries, pending, status };
+}
+
+function firstLine(text: string): string {
+  const line = text.trim().split(/\r?\n/).find((l) => l.trim()) ?? "";
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
 export function reducer(state: State, ev: Event): State {
@@ -93,6 +178,8 @@ export function reducer(state: State, ev: Event): State {
       return { ...state, pending: { kind: "confirm", actionLabel: ev.actionLabel, reason: ev.reason }, status: { text: "Waiting for confirmation…", level: "warn" } };
     case "clarify":
       return { ...state, pending: { kind: "clarify", question: ev.question, options: ev.options }, status: { text: 'Say "the first one" or click an option', level: "warn" } };
+    case "brain_event":
+      return applyBrainEvent(state, ev.stepId, ev.runId, ev.event);
     case "dismiss_pending":
       return { ...state, pending: null };
     case "clear_log":

@@ -55,6 +55,19 @@ button.link { background: none; border: none; color: var(--muted); padding: 0; t
 .card { padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel); }
 .card.confirm { border-color: var(--warn); }
 .card.clarify { border-color: var(--accent); }
+.card.approval { border-color: var(--jev); }
+.tag.hermes, .tag.route.hermes { border-color: var(--jev); color: var(--jev); }
+.tag.route.computer { border-color: var(--accent-2); color: var(--accent-2); }
+.hermes { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--jev); background: rgba(180,140,255,.06); }
+.hermes-head { display: flex; align-items: center; gap: 8px; }
+.hermes.running .hermes-head::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--jev); animation: pulse 1.4s ease-out infinite; }
+.hermes .tools { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.hermes .tools li { display: flex; gap: 8px; align-items: baseline; }
+.hermes .tools li.running .tool-name::after { content: "…"; }
+.hermes .tools li.error .tool-name { color: var(--danger); }
+.hermes .tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.hermes .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.hermes .reply { margin: 8px 0 0; white-space: pre-wrap; font: inherit; font-size: 13px; max-height: 240px; overflow: auto; }
 .card-title { font-weight: 600; margin-bottom: 6px; }
 .card-body { margin-bottom: 4px; }
 .muted { color: var(--muted); font-size: 12px; }

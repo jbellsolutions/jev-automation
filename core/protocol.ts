@@ -1,4 +1,6 @@
 import type { Action } from "./actions.js";
+import type { ApprovalChoice, BrainEvent } from "./brain.js";
+import type { Route } from "./route.js";
 import type { Blocker } from "./verify.js";
 
 /** WebSocket messages, browser UI -> server. */
@@ -6,6 +8,8 @@ export type ClientMessage =
   | { type: "command"; text: string; via: "voice" | "text" }
   | { type: "confirm_reply"; ok: boolean }
   | { type: "pick"; elementId: string }
+  /** Answer to a brain approval request (the agent asked before doing something). */
+  | { type: "approval_reply"; choice: ApprovalChoice }
   /** Click on the live view; fx/fy are fractions (0–1) of the image so resizes stay accurate. */
   | { type: "click_at"; fx: number; fy: number }
   /** The pixel size the UI has available for the live view; the server sizes the viewport to match. */
@@ -16,6 +20,8 @@ export interface DecisionSummary {
   command: string;
   intent: string;
   intentConfidence: number;
+  route?: Route;
+  routeConfidence?: number;
   action: Action;
   actionLabel: string;
   source: "jev" | "heuristic";
@@ -37,6 +43,9 @@ export type ServerMessage =
   | { type: "status"; text: string; level: "info" | "busy" | "ok" | "warn" | "error" }
   | { type: "decision"; decision: DecisionSummary }
   | { type: "confirm"; actionLabel: string; reason: string }
+  /** Progress of the brain run started by the step acknowledged with `stepId`; an `approval`
+   *  event leaves the session waiting for approval_reply (or a spoken yes/no). */
+  | { type: "brain_event"; stepId: number; runId: string; event: BrainEvent }
   | { type: "clarify"; question: string; options: Array<{ elementId: string; label: string; probability: number }> }
   /** One per step; `stepId` identifies it for later messages (verify). `step` is present only
    *  when the utterance was split into several. */

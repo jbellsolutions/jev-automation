@@ -11,6 +11,7 @@ import type { Action, ScrollDirection } from "./actions.js";
 import { describeAction } from "./actions.js";
 import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo } from "./commands.js";
 import { NONE_OPTION, type PageElement, type PageSnapshot, describeElement, elementCriteria } from "./elements.js";
+import { ROUTES, ROUTE_THRESHOLD, type Route, appRequest, reconcileRoute, routeHeuristically } from "./route.js";
 import { type VerifyInput, type VerifyResult, buildVerifyQuestions, buildVerifyState, heuristicVerdict, interpretVerifyAnswers, quickVerdict } from "./verify.js";
 
 export const INTENTS = {
@@ -49,6 +50,8 @@ export const INTENTS = {
 } as const;
 
 export type Intent = keyof typeof INTENTS;
+/** Browser intents plus the one computer-lane intent code can act on before M5. */
+export type DecisionIntent = Intent | "open_app";
 
 export interface Alternative {
   elementId: string;
@@ -59,8 +62,11 @@ export interface Alternative {
 export interface Decision {
   command: string;
   action: Action;
-  intent: Intent;
+  intent: DecisionIntent;
   intentConfidence: number;
+  /** Which lane handles the utterance; decided on the whole utterance, before splitting. */
+  route: Route;
+  routeConfidence: number;
   source: "jev" | "heuristic";
   /** P(action is hard to undo) from Jev; heuristics use a keyword list. */
   riskProbability: number;
@@ -80,6 +86,11 @@ export const THRESHOLDS = {
   risk: 0.6,
   /** Noul probability above which typed text is followed by Enter. */
   submit: 0.6,
+  /** Below this, the route answer is ignored: a confident page verb stays in the browser lane,
+   *  anything else goes to the brain. */
+  route: ROUTE_THRESHOLD,
+  /** Intent confidence at or above which a page verb keeps the fast lane when the route is unsure. */
+  browserIntent: 0.6,
 };
 
 /** Actions that are gated by the risk check; navigation and scrolling never are. */
@@ -95,8 +106,12 @@ export function buildState(parsed: ParsedCommand, snapshot: PageSnapshot) {
 /** Every question in one request; code reads only the answers the intent needs. */
 export function buildQuestions(parsed: ParsedCommand, snapshot: PageSnapshot): Questions {
   const questions: Questions = {
+    route: choice(
+      { question: "Which part of the assistant should handle what the user said: the browser acting on the current page right now, the Mac's applications, or the agent that thinks, remembers and uses tools?", command: parsed.text },
+      ROUTES as unknown as ChoiceCriteria,
+    ),
     intent: choice(
-      { question: "What is the user asking the web browser to do?", command: parsed.text },
+      { question: "If this is for the web browser, what is the user asking it to do?", command: parsed.text },
       INTENTS as unknown as ChoiceCriteria,
     ),
     risky: noul(
@@ -165,12 +180,14 @@ function textAfterVerb(parsed: ParsedCommand): string {
   return parsed.text.replace(/^(?:type|enter|write|input|put|say|search for|search|look up|google|find)\s+/, "").trim();
 }
 
-function base(parsed: ParsedCommand, intent: Intent, intentConfidence: number, source: Decision["source"], action: Action): Decision {
+function base(parsed: ParsedCommand, intent: DecisionIntent, intentConfidence: number, source: Decision["source"], action: Action): Decision {
   return {
     command: parsed.text,
     action,
     intent,
     intentConfidence,
+    route: "browser_now",
+    routeConfidence: 0,
     source,
     riskProbability: 0,
     needsConfirmation: false,
@@ -183,6 +200,44 @@ function base(parsed: ParsedCommand, intent: Intent, intentConfidence: number, s
 
 /** Pure: Jev's answers + pre-parsed command -> Decision. */
 export function interpretAnswers(answers: Answers, parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
+  const d = interpretBrowserAnswers(answers, parsed, snapshot);
+  const actionable = d.intent !== "unclear" && d.intent !== "stop";
+  const r = reconcileRoute(choiceOf(answers, "route"), actionable && d.intentConfidence >= THRESHOLDS.browserIntent, actionable);
+  return applyRoute(d, r.route, r.confidence, parsed);
+}
+
+/** Stamp the lane onto a browser decision and swap in the lane's own action where code can
+ *  act: a parsed app name for the computer lane, a stop for stop. A computer route without a
+ *  recognisable app, and background speech, are handed to the brain / reported as unclear. */
+function applyRoute(d: Decision, route: Route, confidence: number, parsed: ParsedCommand): Decision {
+  d.route = route;
+  d.routeConfidence = confidence;
+  if (route === "computer") {
+    const app = appRequest(parsed.text);
+    if (app) {
+      d.intent = "open_app";
+      d.action = { kind: "open_app", app };
+      d.needsConfirmation = false;
+      d.clarify = null;
+    } else {
+      d.route = "hermes";
+    }
+  } else if (route === "stop") {
+    d.intent = "stop";
+    d.action = { kind: "stop" };
+    d.needsConfirmation = false;
+    d.clarify = null;
+  } else if (route === "unclear") {
+    d.intent = "unclear";
+    d.action = { kind: "none", reason: "That didn't sound like it was for me" };
+    d.needsConfirmation = false;
+    d.clarify = null;
+  }
+  return d;
+}
+
+/** Pure: the browser part of Jev's answers -> Decision (route still to be applied). */
+function interpretBrowserAnswers(answers: Answers, parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
   const intentAns = choiceOf(answers, "intent");
   let intent = (intentAns?.choice ?? "unclear") as Intent;
   const intentConfidence = intentAns?.confidence ?? 0;
@@ -285,6 +340,12 @@ export function matchElements(label: string, elements: PageElement[], fieldsOnly
 }
 
 export function decideHeuristically(parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
+  const d = decideBrowserHeuristically(parsed, snapshot);
+  const r = routeHeuristically(parsed.text, d.intent !== "unclear" && d.intent !== "stop");
+  return applyRoute(d, r.route, r.confidence, parsed);
+}
+
+function decideBrowserHeuristically(parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
   const t = parsed.text;
   const mk = (intent: Intent, action: Action, conf = 0.7): Decision => {
     const d = base(parsed, intent, conf, "heuristic", action);
