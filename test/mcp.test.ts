@@ -107,12 +107,12 @@ describe("renderResult", () => {
   it("marks stopped sequences", () => {
     const text = renderResult({
       ok: false,
-      steps: [{ command: "open a.com", decision: null, result: { text: "boom", level: "error" } }, { command: "scroll down", decision: null, result: null }],
+      steps: [{ stepId: 1, command: "open a.com", decision: null, result: { text: "boom", level: "error" } }],
       page: { url: "https://a.com", title: "" },
       pending: null,
       stoppedAt: 0,
     });
     expect(text).toContain("✗ boom");
-    expect(text).toContain("Stopped after step 1 of 2.");
+    expect(text).toContain("Stopped at step 1; later steps of the request did not run.");
   });
 });

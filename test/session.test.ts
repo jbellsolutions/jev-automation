@@ -195,7 +195,7 @@ describe("Session: multi-step utterances", () => {
     const { session, messages } = make();
     await session.command("open a.com");
     expect(messages.some((m) => m.type === "steps")).toBe(false);
-    expect(messages[0]).toEqual({ type: "transcript_ack", text: "open a.com" });
+    expect(messages[0]).toEqual({ type: "transcript_ack", text: "open a.com", stepId: 1 });
   });
 
   it("stops the sequence when a step fails", async () => {

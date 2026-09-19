@@ -5,6 +5,8 @@ export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 
 export interface LogEntry {
   id: number;
+  /** Server-side step id; verify messages refer to it. */
+  stepId?: number;
   said: string;
   /** Set when this entry is one step of a longer utterance. */
   step?: { index: number; total: number; original: string };
@@ -66,14 +68,14 @@ export function reducer(state: State, ev: Event): State {
       return { ...state, status, entries, pending: state.pending?.kind === "confirm" ? null : state.pending };
     }
     case "transcript_ack": {
-      const entry: LogEntry = { id: nextId++, said: ev.text, decision: null, result: null, ...(ev.step ? { step: ev.step } : {}) };
+      const entry: LogEntry = { id: nextId++, stepId: ev.stepId, said: ev.text, decision: null, result: null, ...(ev.step ? { step: ev.step } : {}) };
       return { ...state, entries: [entry, ...state.entries].slice(0, MAX_ENTRIES), pending: state.pending?.kind === "clarify" ? null : state.pending };
     }
     case "decision":
       return { ...state, entries: updateLatest(state.entries, (e) => ({ ...e, decision: ev.decision })) };
     case "verify": {
-      // attach to the newest entry for that command (background checks can land after later commands)
-      const idx = state.entries.findIndex((e) => e.said === ev.command && !e.verify);
+      // background checks can land after later commands, so match on the step id
+      const idx = state.entries.findIndex((e) => e.stepId === ev.stepId);
       if (idx === -1) return state;
       const entries = state.entries.slice();
       entries[idx] = { ...entries[idx]!, verify: ev.verify };

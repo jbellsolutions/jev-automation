@@ -7,6 +7,8 @@ import type { DecisionSummary, ServerMessage, VerifySummary } from "./protocol.j
 export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 
 export interface StepResult {
+  /** Matches the transcript_ack / verify messages for this step. */
+  stepId: number;
   command: string;
   decision: DecisionSummary | null;
   /** The outcome line shown in the UI, or null when the step ended in a question. */
@@ -21,12 +23,14 @@ export type PendingSummary =
   | null;
 
 export interface CommandResult {
+  /** True only when every requested step ran and succeeded and nothing is pending. */
   ok: boolean;
   steps: StepResult[];
   page: { url: string; title: string };
   /** A question the session is now waiting on; answer with reply()/pick(). */
   pending: PendingSummary;
-  /** Index of the step that stopped a sequence early, when not all steps ran. */
+  /** Index into `steps` of the step at which the sequence stopped — because it failed, was
+   *  stuck, or asked a question — when later steps of the utterance did not run. */
   stoppedAt?: number;
 }
 

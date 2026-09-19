@@ -36,12 +36,13 @@ export type ServerMessage =
   | { type: "decision"; decision: DecisionSummary }
   | { type: "confirm"; actionLabel: string; reason: string }
   | { type: "clarify"; question: string; options: Array<{ elementId: string; label: string; probability: number }> }
-  /** One per step; `step` is present only when the utterance was split into several. */
-  | { type: "transcript_ack"; text: string; step?: StepInfo }
+  /** One per step; `stepId` identifies it for later messages (verify). `step` is present only
+   *  when the utterance was split into several. */
+  | { type: "transcript_ack"; text: string; stepId: number; step?: StepInfo }
   /** Announces how an utterance was split, before the first step's ack. */
   | { type: "steps"; original: string; commands: string[] }
-  /** Outcome check for the step whose command is `command` (the most recent entry with that text). */
-  | { type: "verify"; command: string; verify: VerifySummary };
+  /** Outcome check for the step acknowledged with `stepId`. */
+  | { type: "verify"; stepId: number; command: string; verify: VerifySummary };
 
 export interface VerifySummary {
   done: boolean;

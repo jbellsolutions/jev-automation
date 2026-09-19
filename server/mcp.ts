@@ -85,7 +85,7 @@ export function renderResult(r: CommandResult): string {
     for (const o of r.pending.options) lines.push(`   ${o.elementId}: ${o.label} (${pct(o.probability)})`);
     lines.push(`Call jev_reply with {"pick": "<elementId>"} to choose.`);
   }
-  if (r.stoppedAt !== undefined && !r.pending) lines.push(`Stopped after step ${r.stoppedAt + 1} of ${r.steps.length}.`);
+  if (r.stoppedAt !== undefined && !r.pending && !r.ok) lines.push(`Stopped at step ${r.stoppedAt + 1}; later steps of the request did not run.`);
   lines.push(`Page: ${r.page.title ? `${r.page.title} — ` : ""}${r.page.url}`);
   return lines.join("\n");
 }

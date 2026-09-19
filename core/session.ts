@@ -56,6 +56,7 @@ const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(er
 export class Session {
   pending: Pending = null;
   private continuation: Continuation | null = null;
+  private nextStepId = 1;
   private queue: Promise<unknown> = Promise.resolve();
   private inFlight: AbortController | null = null;
   private busy = false;
@@ -81,6 +82,13 @@ export class Session {
 
   private emit(msg: ServerMessage): void {
     for (const fn of this.listeners) fn(msg);
+  }
+
+  /** Announce a step and hand back its result skeleton. */
+  private ack(command: string, info?: StepInfo): StepResult {
+    const stepId = this.nextStepId++;
+    this.emit(info ? { type: "transcript_ack", text: command, stepId, step: info } : { type: "transcript_ack", text: command, stepId });
+    return { stepId, command, decision: null, result: null };
   }
 
   private report(text: string, level: StatusLevel = "info"): { text: string; level: StatusLevel } {
@@ -132,11 +140,11 @@ export class Session {
       const pending = this.pending?.kind === "confirm" ? this.pending : null;
       const rest = this.takeContinuation();
       this.pending = null;
-      const step: StepResult = { command: ok ? "yes" : "no", decision: null, result: null };
-      if (!pending) return this.finish([step], false);
+      const step = this.ack(ok ? "yes" : "no");
+      if (!pending) return this.finish([step]);
       if (!ok) {
         step.result = this.report(`Cancelled: ${pending.label}`, "warn");
-        return this.finish([step], true);
+        return this.finish([step]);
       }
       await this.runHeld(step, pending.action, pending.before, rest !== null);
       return this.resume([step], rest);
@@ -150,8 +158,8 @@ export class Session {
       const opt = pending?.decision.clarify?.options.find((o) => o.elementId === elementId);
       const rest = this.takeContinuation();
       this.pending = null;
-      const step: StepResult = { command: `pick ${elementId}`, decision: null, result: null };
-      if (!pending || !opt) return this.finish([step], false);
+      const step = this.ack(`pick ${elementId}`);
+      if (!pending || !opt) return this.finish([step]);
       await this.runHeld(step, { kind: "click", elementId: opt.elementId, label: opt.label }, pending.before, rest !== null);
       return this.resume([step], rest);
     });
@@ -186,8 +194,10 @@ export class Session {
     this.report("Stopped", "ok");
   }
 
-  private async finish(steps: StepResult[], ok: boolean, stoppedAt?: number): Promise<CommandResult> {
-    const result: CommandResult = { ok, steps, page: await this.page(), pending: this.pendingSummary() };
+  private async finish(steps: StepResult[], stoppedAt?: number): Promise<CommandResult> {
+    const pending = this.pendingSummary();
+    const ok = pending === null && steps.length > 0 && stoppedAt === undefined && steps.every((s) => s.result?.level === "ok" && !s.verify?.stuck);
+    const result: CommandResult = { ok, steps, page: await this.page(), pending };
     if (stoppedAt !== undefined) result.stoppedAt = stoppedAt;
     return result;
   }
@@ -216,7 +226,7 @@ export class Session {
       const v = await this.decider.verify({ command: step.command, expectation: null, action, before, after, error });
       const summary = Session.summarizeVerify(v);
       step.verify = summary;
-      this.emit({ type: "verify", command: step.command, verify: summary });
+      this.emit({ type: "verify", stepId: step.stepId, command: step.command, verify: summary });
       if (v.meta.fallbackReason) this.report(`Jev unavailable for verification (${v.meta.fallbackReason}); used heuristics`, "warn");
       return summary;
     } catch (err) {
@@ -235,7 +245,7 @@ export class Session {
   private async resume(steps: StepResult[], rest: Continuation | null): Promise<CommandResult> {
     const last = steps[steps.length - 1];
     const failed = last?.result?.level === "error" || !!last?.verify?.stuck;
-    if (failed || !rest) return this.finish(steps, !failed);
+    if (failed || !rest) return this.finish(steps, failed && rest ? steps.length - 1 : undefined);
     return this.runSteps(rest.original, rest.commands, rest.index + 1, steps);
   }
 
@@ -244,24 +254,29 @@ export class Session {
     const outcome = await this.runAction(action);
     step.result = { text: outcome.text, level: outcome.level };
     if (blocking) await this.verifyStep(step, action, before, outcome.error);
-    else void this.verifyStep(step, action, before, outcome.error);
+    else this.verifySoon(step, action, before, outcome.error);
+  }
+
+  /** Verify after the current task, still inside the queue: a snapshot re-tags element ids,
+   *  so it must never interleave with another command's snapshot → execute. */
+  private verifySoon(step: StepResult, action: Action, before: PageSnapshot, error: string | null): void {
+    this.enqueue(() => this.verifyStep(step, action, before, error)).catch(() => {});
   }
 
   private async handleCommand(text: string): Promise<CommandResult> {
     const trimmed = text.trim();
-    if (!trimmed) return this.finish([], false);
+    if (!trimmed) return this.finish([]);
 
     if (this.pending?.kind === "confirm") {
       const pending = this.pending;
       const reply = await this.decider.classifyReply(trimmed, pending.label);
       if (reply === "confirm" || reply === "cancel") {
-        this.emit({ type: "transcript_ack", text: trimmed });
         const rest = this.takeContinuation();
         this.pending = null;
-        const step: StepResult = { command: trimmed, decision: null, result: null };
+        const step = this.ack(trimmed);
         if (reply === "cancel") {
           step.result = this.report(`Cancelled: ${pending.label}`, "warn");
-          return this.finish([step], true);
+          return this.finish([step]);
         }
         await this.runHeld(step, pending.action, pending.before, rest !== null);
         return this.resume([step], rest);
@@ -277,15 +292,14 @@ export class Session {
       const rest = this.takeContinuation();
       this.pending = null;
       if (picked) {
-        this.emit({ type: "transcript_ack", text: trimmed });
-        const step: StepResult = { command: trimmed, decision: null, result: null };
+        const step = this.ack(trimmed);
         await this.runHeld(step, { kind: "click", elementId: picked.elementId, label: picked.label }, pending.before, rest !== null);
         return this.resume([step], rest);
       }
     }
 
     const commands = splitSteps(trimmed);
-    if (commands.length === 0) return this.finish([], false);
+    if (commands.length === 0) return this.finish([]);
     if (commands.length > 1) this.emit({ type: "steps", original: trimmed, commands });
     return this.runSteps(trimmed, commands, 0, []);
   }
@@ -297,30 +311,29 @@ export class Session {
     for (let i = from; i < total; i++) {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
-      this.emit(info ? { type: "transcript_ack", text: command, step: info } : { type: "transcript_ack", text: command });
-      const step = await this.runStep(command, total > 1 ? "blocking" : "async");
+      const step = await this.runStep(this.ack(command, info), total > 1 ? "blocking" : "async");
       steps.push(step);
       if (step.verify?.stuck) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");
-        return this.finish(steps, false, i);
+        return this.finish(steps, steps.length - 1);
       }
       if (this.pending) {
         this.continuation = i + 1 < total ? { original, commands, index: i } : null;
-        return this.finish(steps, true, i + 1 < total ? i : undefined);
+        return this.finish(steps, i + 1 < total ? steps.length - 1 : undefined);
       }
-      if (step.decision?.action.kind === "stop") return this.finish(steps, true, i);
+      if (step.decision?.action.kind === "stop") return this.finish(steps, steps.length - 1);
       const failed = !step.result || step.result.level === "error" || step.result.level === "warn";
       if (failed) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.result?.text ?? "no result"}`, "warn");
-        return this.finish(steps, false, i);
+        return this.finish(steps, steps.length - 1);
       }
     }
-    return this.finish(steps, true);
+    return this.finish(steps);
   }
 
   /** One command against a fresh snapshot: decide, gate, execute, check. May leave `pending` set. */
-  private async runStep(command: string, verifyMode: "blocking" | "async"): Promise<StepResult> {
-    const step: StepResult = { command, decision: null, result: null };
+  private async runStep(step: StepResult, verifyMode: "blocking" | "async"): Promise<StepResult> {
+    const command = step.command;
     this.report("Thinking…", "busy");
     this.inFlight?.abort();
     const controller = (this.inFlight = new AbortController());
@@ -361,7 +374,7 @@ export class Session {
     const outcome = await this.runAction(decision.action);
     step.result = { text: outcome.text, level: outcome.level };
     if (verifyMode === "blocking") await this.verifyStep(step, decision.action, snapshot, outcome.error);
-    else void this.verifyStep(step, decision.action, snapshot, outcome.error);
+    else this.verifySoon(step, decision.action, snapshot, outcome.error);
     return step;
   }
 }

@@ -19,7 +19,7 @@ describe("reducer", () => {
 
   it("builds a log entry from transcript → decision → outcome", () => {
     const s = run([
-      { type: "transcript_ack", text: "click on pricing" },
+      { type: "transcript_ack", text: "click on pricing", stepId: 1 },
       { type: "decision", decision },
       { type: "status", text: "Clicking…", level: "busy" },
       { type: "status", text: 'Clicked link "Pricing"', level: "ok" },
@@ -31,7 +31,7 @@ describe("reducer", () => {
 
   it("does not overwrite an entry's outcome with later statuses", () => {
     const s = run([
-      { type: "transcript_ack", text: "go back" },
+      { type: "transcript_ack", text: "go back", stepId: 2 },
       { type: "status", text: "Went back", level: "ok" },
       { type: "status", text: "Something else", level: "warn" },
     ]);
@@ -39,7 +39,7 @@ describe("reducer", () => {
   });
 
   it("opens a confirmation and closes it on the next outcome", () => {
-    let s = run([{ type: "transcript_ack", text: "click delete" }, { type: "confirm", actionLabel: "Click Delete", reason: "risky" }]);
+    let s = run([{ type: "transcript_ack", text: "click delete", stepId: 3 }, { type: "confirm", actionLabel: "Click Delete", reason: "risky" }]);
     expect(s.pending).toMatchObject({ kind: "confirm", actionLabel: "Click Delete" });
     s = reducer(s, { type: "status", text: "Cancelled: Click Delete", level: "warn" });
     expect(s.pending).toBeNull();
@@ -47,16 +47,16 @@ describe("reducer", () => {
 
   it("opens a clarification and drops it when a new command arrives", () => {
     const options = [{ elementId: "e1", label: "a", probability: 0.5 }];
-    let s = run([{ type: "transcript_ack", text: "click choose" }, { type: "clarify", question: "Which one?", options }]);
+    let s = run([{ type: "transcript_ack", text: "click choose", stepId: 4 }, { type: "clarify", question: "Which one?", options }]);
     expect(s.pending).toMatchObject({ kind: "clarify", options });
-    s = reducer(s, { type: "transcript_ack", text: "the second one" });
+    s = reducer(s, { type: "transcript_ack", text: "the second one", stepId: 5 });
     expect(s.pending).toBeNull();
     expect(s.entries).toHaveLength(2);
   });
 
   it("caps the log and clears it", () => {
     let s = initialState;
-    for (let i = 0; i < 50; i++) s = reducer(s, { type: "transcript_ack", text: `cmd ${i}` });
+    for (let i = 0; i < 50; i++) s = reducer(s, { type: "transcript_ack", text: `cmd ${i}`, stepId: i + 1 });
     expect(s.entries).toHaveLength(40);
     expect(s.entries[0]?.said).toBe("cmd 49");
     expect(reducer(s, { type: "clear_log" }).entries).toEqual([]);
@@ -68,13 +68,23 @@ describe("multi-step utterances", () => {
     let s = initialState;
     const original = "open a.com and open b.com";
     s = reducer(s, { type: "steps", original, commands: ["open a.com", "open b.com"] });
-    s = reducer(s, { type: "transcript_ack", text: "open a.com", step: { index: 0, total: 2, original } });
+    s = reducer(s, { type: "transcript_ack", text: "open a.com", stepId: 7, step: { index: 0, total: 2, original } });
     s = reducer(s, { type: "status", text: "Opened https://a.com", level: "ok" });
-    s = reducer(s, { type: "transcript_ack", text: "open b.com", step: { index: 1, total: 2, original } });
+    s = reducer(s, { type: "transcript_ack", text: "open b.com", stepId: 8, step: { index: 1, total: 2, original } });
     s = reducer(s, { type: "status", text: "Opened https://b.com", level: "ok" });
     expect(s.entries.map((e) => e.said)).toEqual(["open b.com", "open a.com"]);
     expect(s.entries[0]!.step).toEqual({ index: 1, total: 2, original });
     expect(s.entries[0]!.result?.text).toBe("Opened https://b.com");
     expect(s.entries[1]!.result?.text).toBe("Opened https://a.com");
+  });
+
+  it("attaches a late verify to the step it belongs to, not the newest entry with that text", () => {
+    let s = initialState;
+    const verify = { done: false, stuck: true, doneProbability: 0, blocker: "no_change", source: "heuristic", latencyMs: 0, text: "stuck: no change" } as const;
+    s = reducer(s, { type: "transcript_ack", text: "scroll down", stepId: 1 });
+    s = reducer(s, { type: "transcript_ack", text: "scroll down", stepId: 2 });
+    s = reducer(s, { type: "verify", stepId: 1, command: "scroll down", verify });
+    expect(s.entries[1]!.verify).toEqual(verify);
+    expect(s.entries[0]!.verify).toBeUndefined();
   });
 });
