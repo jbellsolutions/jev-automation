@@ -3,16 +3,24 @@
  *  Every observable event is emitted as a ServerMessage; hosts (WebSocket hub, HTTP, MCP)
  *  subscribe and forward. Work is serialized per session so replies can't overtake commands. */
 import { type Action, describeAction } from "./actions.js";
-import { parseOrdinal } from "./commands.js";
+import { parseOrdinal, splitSteps } from "./commands.js";
 import type { Decider, Decision } from "./decide.js";
 import type { Executor } from "./executor.js";
-import type { DecisionSummary, ServerMessage } from "./protocol.js";
+import type { DecisionSummary, ServerMessage, StepInfo } from "./protocol.js";
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
 
 export type Pending =
   | { kind: "confirm"; action: Action; label: string; reason: string }
   | { kind: "clarify"; decision: Decision }
   | null;
+
+/** The rest of a multi-step utterance, parked while a confirm/clarify question is open. */
+interface Continuation {
+  original: string;
+  commands: string[];
+  /** Index of the step that raised the question; resume from index + 1. */
+  index: number;
+}
 
 export interface SessionDeps {
   executor: Executor;
@@ -42,6 +50,7 @@ const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(er
 
 export class Session {
   pending: Pending = null;
+  private continuation: Continuation | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private inFlight: AbortController | null = null;
   private busy = false;
@@ -116,11 +125,16 @@ export class Session {
   reply(ok: boolean): Promise<CommandResult> {
     return this.enqueue(async () => {
       const pending = this.pending?.kind === "confirm" ? this.pending : null;
+      const rest = this.takeContinuation();
       this.pending = null;
       const step: StepResult = { command: ok ? "yes" : "no", decision: null, result: null };
       if (!pending) return this.finish([step], false);
-      step.result = ok ? await this.runAction(pending.action) : this.report(`Cancelled: ${pending.label}`, "warn");
-      return this.finish([step], step.result.level !== "error");
+      if (!ok) {
+        step.result = this.report(`Cancelled: ${pending.label}`, "warn");
+        return this.finish([step], true);
+      }
+      step.result = await this.runAction(pending.action);
+      return this.resume([step], rest);
     });
   }
 
@@ -128,11 +142,12 @@ export class Session {
   pick(elementId: string): Promise<CommandResult> {
     return this.enqueue(async () => {
       const opt = this.pending?.kind === "clarify" ? this.pending.decision.clarify?.options.find((o) => o.elementId === elementId) : undefined;
+      const rest = this.takeContinuation();
       this.pending = null;
       const step: StepResult = { command: `pick ${elementId}`, decision: null, result: null };
       if (!opt) return this.finish([step], false);
       step.result = await this.runAction({ kind: "click", elementId: opt.elementId, label: opt.label });
-      return this.finish([step], step.result.level !== "error");
+      return this.resume([step], rest);
     });
   }
 
@@ -161,6 +176,7 @@ export class Session {
   cancel(): void {
     this.inFlight?.abort();
     this.pending = null;
+    this.continuation = null;
     this.report("Stopped", "ok");
   }
 
@@ -182,50 +198,98 @@ export class Session {
     return outcome;
   }
 
+  private takeContinuation(): Continuation | null {
+    const c = this.continuation;
+    this.continuation = null;
+    return c;
+  }
+
+  /** After a held action ran, carry on with the steps parked behind the question. */
+  private async resume(steps: StepResult[], rest: Continuation | null): Promise<CommandResult> {
+    const last = steps[steps.length - 1];
+    if (last?.result?.level === "error" || !rest) return this.finish(steps, last?.result?.level !== "error");
+    return this.runSteps(rest.original, rest.commands, rest.index + 1, steps);
+  }
+
   private async handleCommand(text: string): Promise<CommandResult> {
     const trimmed = text.trim();
     if (!trimmed) return this.finish([], false);
-    this.emit({ type: "transcript_ack", text: trimmed });
-    const step: StepResult = { command: trimmed, decision: null, result: null };
-    const steps = [step];
 
     if (this.pending?.kind === "confirm") {
       const pending = this.pending;
       const reply = await this.decider.classifyReply(trimmed, pending.label);
-      if (reply === "confirm") {
+      if (reply === "confirm" || reply === "cancel") {
+        this.emit({ type: "transcript_ack", text: trimmed });
+        const rest = this.takeContinuation();
         this.pending = null;
+        const step: StepResult = { command: trimmed, decision: null, result: null };
+        if (reply === "cancel") {
+          step.result = this.report(`Cancelled: ${pending.label}`, "warn");
+          return this.finish([step], true);
+        }
         step.result = await this.runAction(pending.action);
-        return this.finish(steps, step.result.level !== "error");
+        return this.resume([step], rest);
       }
-      if (reply === "cancel") {
-        this.pending = null;
-        step.result = this.report(`Cancelled: ${pending.label}`, "warn");
-        return this.finish(steps, true);
-      }
-      this.pending = null; // a new command supersedes the question
+      this.pending = null; // a new command supersedes the question and whatever was queued behind it
+      this.continuation = null;
     }
     if (this.pending?.kind === "clarify") {
       const opts = this.pending.decision.clarify?.options ?? [];
       const idx = parseOrdinal(trimmed);
       const picked = idx !== null ? opts[idx] : undefined;
+      const rest = this.takeContinuation();
       this.pending = null;
       if (picked) {
+        this.emit({ type: "transcript_ack", text: trimmed });
+        const step: StepResult = { command: trimmed, decision: null, result: null };
         step.result = await this.runAction({ kind: "click", elementId: picked.elementId, label: picked.label });
-        return this.finish(steps, step.result.level !== "error");
+        return this.resume([step], rest);
       }
     }
 
+    const commands = splitSteps(trimmed);
+    if (commands.length === 0) return this.finish([], false);
+    if (commands.length > 1) this.emit({ type: "steps", original: trimmed, commands });
+    return this.runSteps(trimmed, commands, 0, []);
+  }
+
+  /** Run commands[from..] in order. A question parks the remainder; an error or a
+   *  non-command stops the sequence. */
+  private async runSteps(original: string, commands: string[], from: number, steps: StepResult[]): Promise<CommandResult> {
+    const total = commands.length;
+    for (let i = from; i < total; i++) {
+      const command = commands[i]!;
+      const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
+      this.emit(info ? { type: "transcript_ack", text: command, step: info } : { type: "transcript_ack", text: command });
+      const step = await this.runStep(command);
+      steps.push(step);
+      if (this.pending) {
+        this.continuation = i + 1 < total ? { original, commands, index: i } : null;
+        return this.finish(steps, true, i + 1 < total ? i : undefined);
+      }
+      if (step.decision?.action.kind === "stop") return this.finish(steps, true, i);
+      const failed = !step.result || step.result.level === "error" || step.result.level === "warn";
+      if (failed) {
+        if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.result?.text ?? "no result"}`, "warn");
+        return this.finish(steps, false, i);
+      }
+    }
+    return this.finish(steps, true);
+  }
+
+  /** One command against a fresh snapshot: decide, gate, execute. May leave `pending` set. */
+  private async runStep(command: string): Promise<StepResult> {
+    const step: StepResult = { command, decision: null, result: null };
     this.report("Thinking…", "busy");
     this.inFlight?.abort();
     const controller = (this.inFlight = new AbortController());
     const snapshot = await this.executor.snapshot();
     let decision: Decision;
     try {
-      decision = await this.decider.decide(trimmed, snapshot, controller.signal);
+      decision = await this.decider.decide(command, snapshot, controller.signal);
     } catch (err) {
-      if (controller.signal.aborted) return this.finish(steps, false);
-      step.result = this.report(errMsg(err), "error");
-      return this.finish(steps, false);
+      step.result = controller.signal.aborted ? this.report("Cancelled", "warn") : this.report(errMsg(err), "error");
+      return step;
     }
     step.decision = summarize(decision);
     this.emit({ type: "decision", decision: step.decision });
@@ -234,25 +298,26 @@ export class Session {
     if (decision.clarify) {
       this.pending = { kind: "clarify", decision };
       this.emit({ type: "clarify", question: decision.clarify.question, options: decision.clarify.options });
-      return this.finish(steps, true);
+      return step;
     }
     if (decision.action.kind === "none") {
       step.result = this.report(decision.action.reason, "warn");
-      return this.finish(steps, false);
+      return step;
     }
     if (decision.action.kind === "stop") {
       this.pending = null;
+      this.continuation = null;
       step.result = this.report("Stopped", "ok");
-      return this.finish(steps, true);
+      return step;
     }
     if (decision.needsConfirmation) {
       const label = describeAction(decision.action);
       const reason = `This looks hard to undo (risk ${Math.round(decision.riskProbability * 100)}%). Say "yes" or "no".`;
       this.pending = { kind: "confirm", action: decision.action, label, reason };
       this.emit({ type: "confirm", actionLabel: label, reason });
-      return this.finish(steps, true);
+      return step;
     }
     step.result = await this.runAction(decision.action);
-    return this.finish(steps, step.result.level !== "error");
+    return step;
   }
 }

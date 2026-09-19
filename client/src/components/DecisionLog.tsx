@@ -7,7 +7,10 @@ function Entry({ entry }: { entry: LogEntry }) {
   const outcome = d ? `→ ${d.actionLabel}` : entry.result ? `→ ${entry.result.text}` : "thinking…";
   return (
     <li className="entry">
-      <div className="said">{entry.said}</div>
+      <div className="said">
+        {entry.said}
+        {entry.step && <span className="tag step" title={entry.step.original}>step {entry.step.index + 1}/{entry.step.total}</span>}
+      </div>
       <div className={`did ${d || entry.result ? "" : "muted"}`}>{outcome}</div>
       {d && (
         <div className="meta">

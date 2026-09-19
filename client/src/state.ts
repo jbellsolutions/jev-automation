@@ -6,6 +6,8 @@ export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 export interface LogEntry {
   id: number;
   said: string;
+  /** Set when this entry is one step of a longer utterance. */
+  step?: { index: number; total: number; original: string };
   decision: DecisionSummary | null;
   result: { text: string; level: StatusLevel } | null;
 }
@@ -63,7 +65,7 @@ export function reducer(state: State, ev: Event): State {
       return { ...state, status, entries, pending: state.pending?.kind === "confirm" ? null : state.pending };
     }
     case "transcript_ack": {
-      const entry: LogEntry = { id: nextId++, said: ev.text, decision: null, result: null };
+      const entry: LogEntry = { id: nextId++, said: ev.text, decision: null, result: null, ...(ev.step ? { step: ev.step } : {}) };
       return { ...state, entries: [entry, ...state.entries].slice(0, MAX_ENTRIES), pending: state.pending?.kind === "clarify" ? null : state.pending };
     }
     case "decision":

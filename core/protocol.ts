@@ -35,4 +35,13 @@ export type ServerMessage =
   | { type: "decision"; decision: DecisionSummary }
   | { type: "confirm"; actionLabel: string; reason: string }
   | { type: "clarify"; question: string; options: Array<{ elementId: string; label: string; probability: number }> }
-  | { type: "transcript_ack"; text: string };
+  /** One per step; `step` is present only when the utterance was split into several. */
+  | { type: "transcript_ack"; text: string; step?: StepInfo }
+  /** Announces how an utterance was split, before the first step's ack. */
+  | { type: "steps"; original: string; commands: string[] };
+
+export interface StepInfo {
+  index: number;
+  total: number;
+  original: string;
+}

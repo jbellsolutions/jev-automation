@@ -228,3 +228,70 @@ export function parseCommand(raw: string): ParsedCommand {
     scroll: parseScrollDirection(text),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Multi-step commands: "open wikipedia and search for cats"
+// ---------------------------------------------------------------------------
+
+/** Verb phrases that can begin a step. Arg-taking verbs must be followed by something. */
+const STEP_START = new RegExp(
+  "^(?:" +
+    // no-argument commands
+    "(?:go\\s+)?back(?:wards?)?|(?:go\\s+)?forwards?|reload|refresh|stop|cancel|scroll\\b|page (?:up|down)|submit|" +
+    // navigation / click / type / search verbs, each needing an argument
+    "(?:go to|goto|go on to|open(?: up)?|navigate to|visit|launch|take me to|show me|bring up|head (?:to|over to)|load|pull up|switch to" +
+    "|click(?: on)?|press(?: on)?|tap(?: on)?|select|choose|hit|push|toggle|check|uncheck|follow|activate|expand|pick" +
+    "|type|enter|write|input|fill(?: in| out)?|put|insert|paste|key in" +
+    "|search(?: the (?:web|internet))?(?: for)?|google|look ?up|find(?: me)?)\\s+\\S" +
+    ")",
+  "i",
+);
+
+/** Connectives between steps: ", then", " and then", " then", " after that", " and", or a bare comma. */
+const CONNECTIVE = /,\s*(?:and then|then|after that|and)?\s*|\s+(?:and then|then|after that|and)\s+/g;
+
+const TYPING_VERB = /^(?:type|enter|write|input|fill(?: in| out)?|put|insert|paste|key in)\b/;
+const SEARCH_VERB_START = /^(?:search|google|look ?up|find)\b/;
+/** A segment that is only "press enter" / "submit" / "search": belongs to the typing step before it. */
+const TAIL_ONLY = /^(?:(?:hit|press|push)\s+(?:enter|return|go|search)|submit(?: it)?|search(?: it)?)$/;
+
+/** Stands in for spaces inside quoted spans while splitting (U+E000, private use). */
+const MASK = "";
+
+/** Split one utterance into sequential single-step commands. Splits only where the right-hand
+ *  side starts with a known verb, so "search for cats and dogs" stays whole; quoted spans are
+ *  never split. A trailing "press enter" is folded back into the typing command before it so
+ *  extractTypedText's SUBMIT_TAIL keeps working. */
+export function splitSteps(raw: string, max = 4): string[] {
+  const text = normalizeSpeech(raw);
+  if (!text) return [];
+  // protect quoted spans: swap their spaces for a placeholder that no regex above matches
+  const masked = text.replace(/(["'“‘])(.+?)(["'”’])/g, (_m, open: string, inner: string, close: string) => open + inner.replace(/\s/g, MASK) + close);
+
+  const segments: string[] = [];
+  let start = 0;
+  for (const m of masked.matchAll(CONNECTIVE)) {
+    const idx = m.index ?? 0;
+    if (idx <= start) continue;
+    const right = masked.slice(idx + m[0].length);
+    if (!STEP_START.test(right)) continue;
+    segments.push(masked.slice(start, idx));
+    start = idx + m[0].length;
+  }
+  segments.push(masked.slice(start));
+
+  const out: string[] = [];
+  for (const seg of segments.map((s) => s.trim()).filter(Boolean)) {
+    const prev = out[out.length - 1];
+    if (prev && TAIL_ONLY.test(seg)) {
+      if (TYPING_VERB.test(prev)) {
+        out[out.length - 1] = `${prev} and ${seg}`;
+        continue;
+      }
+      if (SEARCH_VERB_START.test(prev)) continue; // searching already submits
+    }
+    out.push(seg);
+  }
+  if (out.length > max) out.splice(max - 1, out.length, out.slice(max - 1).join(" and "));
+  return out.map((s) => s.replaceAll(MASK, " "));
+}

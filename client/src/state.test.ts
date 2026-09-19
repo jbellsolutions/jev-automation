@@ -62,3 +62,19 @@ describe("reducer", () => {
     expect(reducer(s, { type: "clear_log" }).entries).toEqual([]);
   });
 });
+
+describe("multi-step utterances", () => {
+  it("makes one entry per step, each carrying its step info, and applies outcomes to the latest", () => {
+    let s = initialState;
+    const original = "open a.com and open b.com";
+    s = reducer(s, { type: "steps", original, commands: ["open a.com", "open b.com"] });
+    s = reducer(s, { type: "transcript_ack", text: "open a.com", step: { index: 0, total: 2, original } });
+    s = reducer(s, { type: "status", text: "Opened https://a.com", level: "ok" });
+    s = reducer(s, { type: "transcript_ack", text: "open b.com", step: { index: 1, total: 2, original } });
+    s = reducer(s, { type: "status", text: "Opened https://b.com", level: "ok" });
+    expect(s.entries.map((e) => e.said)).toEqual(["open b.com", "open a.com"]);
+    expect(s.entries[0]!.step).toEqual({ index: 1, total: 2, original });
+    expect(s.entries[0]!.result?.text).toBe("Opened https://b.com");
+    expect(s.entries[1]!.result?.text).toBe("Opened https://a.com");
+  });
+});

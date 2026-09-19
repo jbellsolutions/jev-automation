@@ -200,3 +200,109 @@ describe("Session: control", () => {
     expect(await session.status()).toMatchObject({ id: "fake", kind: "playwright", url: "https://example.test/", busy: false, pending: null });
   });
 });
+
+describe("Session: multi-step utterances", () => {
+  const risky = [el("e0", { tag: "button", text: "Delete account" })];
+  const ambiguous = [el("e0", { text: "Pricing", hrefShort: "/pricing" }), el("e1", { text: "Pricing FAQ", hrefShort: "/faq" }), el("e2", { text: "Pricing plans", hrefShort: "/plans" })];
+
+  it("runs each step against a fresh snapshot and announces the split", async () => {
+    const { session, executor, messages } = make();
+    const r = await session.command("open a.com and then open b.com and scroll down");
+    expect(executor.snapshots).toBe(3);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["navigate", "navigate", "scroll"]);
+    expect(r.ok).toBe(true);
+    expect(r.steps.map((s) => s.command)).toEqual(["open a.com", "open b.com", "scroll down"]);
+    expect(r.stoppedAt).toBeUndefined();
+    expect(messages[0]).toEqual({ type: "steps", original: "open a.com and then open b.com and scroll down", commands: ["open a.com", "open b.com", "scroll down"] });
+    const acks = messages.filter((m) => m.type === "transcript_ack");
+    expect(acks).toHaveLength(3);
+    expect(acks[1]).toMatchObject({ text: "open b.com", step: { index: 1, total: 3 } });
+  });
+
+  it("a single-step utterance carries no step info and no steps message", async () => {
+    const { session, messages } = make();
+    await session.command("open a.com");
+    expect(messages.some((m) => m.type === "steps")).toBe(false);
+    expect(messages[0]).toEqual({ type: "transcript_ack", text: "open a.com" });
+  });
+
+  it("stops the sequence when a step fails", async () => {
+    const { session, executor, messages } = make();
+    executor.failNext = "network down";
+    const r = await session.command("open a.com and scroll down");
+    expect(executor.executed).toEqual([]);
+    expect(r.ok).toBe(false);
+    expect(r.stoppedAt).toBe(0);
+    expect(r.steps).toHaveLength(1);
+    expect(messages.at(-1)).toMatchObject({ type: "status", level: "warn", text: expect.stringContaining("Stopped after step 1 of 2") });
+  });
+
+  it("stops when a step is not a browser command", async () => {
+    const { session, executor } = make();
+    const r = await session.command("open a.com and what do you think and scroll down");
+    // "what do you think" has no verb so it stays glued to step 1; only the scroll splits off
+    expect(r.steps.map((s) => s.command)).toEqual(["open a.com and what do you think", "scroll down"]);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["navigate", "scroll"]);
+  });
+
+  it("parks the remaining steps behind a confirmation and resumes on yes", async () => {
+    const { session, executor } = make(risky);
+    const first = await session.command("click delete account and scroll down");
+    expect(first.pending?.kind).toBe("confirm");
+    expect(first.stoppedAt).toBe(0);
+    expect(executor.executed).toEqual([]);
+    const second = await session.command("yes");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click", "scroll"]);
+    expect(second.ok).toBe(true);
+    expect(second.steps.map((s) => s.command)).toEqual(["yes", "scroll down"]);
+  });
+
+  it("drops the remaining steps on no", async () => {
+    const { session, executor } = make(risky);
+    await session.command("click delete account and scroll down");
+    await session.command("no");
+    expect(executor.executed).toEqual([]);
+    await session.command("open a.com");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["navigate"]);
+  });
+
+  it("resumes after reply(true) and after pick()", async () => {
+    const a = make(risky);
+    await a.session.command("click delete account and scroll down");
+    await a.session.reply(true);
+    expect(a.executor.executed.map((x) => x.kind)).toEqual(["click", "scroll"]);
+
+    const b = make(ambiguous);
+    await b.session.command("click pricing and scroll down");
+    await b.session.pick("e2");
+    expect(b.executor.executed.map((x) => x.kind)).toEqual(["click", "scroll"]);
+
+    const c = make(ambiguous);
+    await c.session.command("click pricing and scroll down");
+    await c.session.command("the third one");
+    expect(c.executor.executed.map((x) => x.kind)).toEqual(["click", "scroll"]);
+  });
+
+  it("an unrelated command while a question is open drops the parked steps too", async () => {
+    const { session, executor } = make(risky);
+    await session.command("click delete account and scroll down");
+    await session.command("open c.com");
+    expect(executor.executed).toEqual([{ kind: "navigate", url: "https://c.com" }]);
+    expect(session.pending).toBeNull();
+  });
+
+  it("cancel() drops parked steps", async () => {
+    const { session, executor } = make(risky);
+    await session.command("click delete account and scroll down");
+    session.cancel();
+    await session.reply(true);
+    expect(executor.executed).toEqual([]);
+  });
+
+  it("'stop' as a step ends the sequence", async () => {
+    const { session, executor } = make();
+    const r = await session.command("open a.com and stop and open b.com");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["navigate"]);
+    expect(r.steps).toHaveLength(2);
+  });
+});
