@@ -55,8 +55,11 @@ const PAGE_SCRIPT = String.raw`(max) => {
 
     const tag = el.tagName.toLowerCase();
     const type = clean(el.getAttribute("type"), 20).toLowerCase();
-    const isField = tag === "input" || tag === "textarea" || tag === "select" || el.getAttribute("contenteditable") === "true";
-    const value = tag === "input" && (type === "submit" || type === "button" || type === "reset") ? el.value : "";
+    // <input type=submit|button|reset|image> are buttons, not fields: their value/alt is their text
+    const isButtonInput = tag === "input" && (type === "submit" || type === "button" || type === "reset" || type === "image");
+    const isField = !isButtonInput && (tag === "input" || tag === "textarea" || tag === "select" || el.getAttribute("contenteditable") === "true");
+    // no value attribute: the browser still renders a default caption for submit/reset
+    const value = isButtonInput ? el.value || (type === "submit" ? "Submit" : type === "reset" ? "Reset" : "") : "";
     const labelledBy = el.getAttribute("aria-labelledby");
     const labelledByText = labelledBy ? clean(document.getElementById(labelledBy)?.textContent, 80) : "";
     const htmlLabel = el.labels && el.labels[0] ? el.labels[0].innerText : "";
@@ -77,7 +80,7 @@ const PAGE_SCRIPT = String.raw`(max) => {
         }
       }
     }
-    if (!text && !label && !placeholder && !name && !hrefShort && !isField) continue;
+    if (!text && !label && !placeholder && !name && !hrefShort && !isField && !isButtonInput) continue;
 
     const item = {
       el, tag,
@@ -124,6 +127,7 @@ export function elementKind(e: PageElement): string {
         case "submit":
         case "button":
         case "reset":
+        case "image":
           return "button";
         case "checkbox":
           return "checkbox";
