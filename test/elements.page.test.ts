@@ -1,6 +1,6 @@
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { describeElement, extractElements } from "../server/elements.js";
+import { describeElement, extractElements } from "../core/elements.js";
 
 /** Runs the real in-page script in headless Chromium against small HTML fixtures. */
 let browser: Browser;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { ClientMessage, ServerMessage } from "../../../server/protocol.ts";
+import type { ClientMessage, ServerMessage } from "../../../core/protocol.ts";
 
 /** WebSocket to the server with auto-reconnect. Messages are typed end to end. */
 export function useSocket(onMessage: (msg: ServerMessage) => void, onOpen: (connected: boolean) => void) {

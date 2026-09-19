@@ -10,7 +10,7 @@ import {
   parseCommand,
   parseOrdinal,
   parseYesNo,
-} from "../server/commands.js";
+} from "../core/commands.js";
 
 describe("normalizeSpeech", () => {
   it("strips filler and punctuation and lower-cases", () => {

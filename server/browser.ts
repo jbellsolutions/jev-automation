@@ -1,6 +1,6 @@
 import { type Browser, type BrowserContext, type Page, chromium } from "playwright";
-import type { Action } from "./actions.js";
-import { type PageSnapshot, extractElements } from "./elements.js";
+import type { Action } from "../core/actions.js";
+import { type PageSnapshot, extractElements } from "../core/elements.js";
 
 export interface BrowserOptions {
   headless: boolean;

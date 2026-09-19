@@ -1,5 +1,5 @@
 /** All UI state in one place, derived purely from server messages + local events. */
-import type { DecisionSummary, ServerMessage } from "../../server/protocol.ts";
+import type { DecisionSummary, ServerMessage } from "../../core/protocol.ts";
 
 export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 

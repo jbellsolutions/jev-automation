@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "../server/protocol.ts", "../server/actions.ts"]
+  "include": ["src", "../core/protocol.ts", "../core/actions.ts"]
 }

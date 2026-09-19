@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DecisionSummary } from "../../server/protocol.ts";
+import type { DecisionSummary } from "../../core/protocol.ts";
 import { type Event, type State, initialState, reducer } from "./state.ts";
 
 const run = (events: Event[], from: State = initialState) => events.reduce(reducer, from);

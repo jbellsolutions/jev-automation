@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ClientMessage } from "../../../server/protocol.ts";
+import type { ClientMessage } from "../../../core/protocol.ts";
 import type { State } from "../state.ts";
 
 interface Props {

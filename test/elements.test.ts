@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_ELEMENTS, NONE_OPTION, type PageElement, describeElement, elementCriteria, extractElements } from "../server/elements.js";
+import { MAX_ELEMENTS, NONE_OPTION, type PageElement, describeElement, elementCriteria, extractElements } from "../core/elements.js";
 
 const el = (over: Partial<PageElement>): PageElement => ({
   id: "e0", tag: "a", role: "", type: "", text: "", label: "", placeholder: "", name: "", hrefShort: null, inViewport: true, ...over,

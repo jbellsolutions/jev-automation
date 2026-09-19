@@ -5,12 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
-import { type Action, describeAction } from "./actions.js";
+import { type Action, describeAction } from "../core/actions.js";
 import { BrowserSession } from "./browser.js";
-import { parseOrdinal } from "./commands.js";
-import { type Decision, createDecider } from "./decide.js";
+import { parseOrdinal } from "../core/commands.js";
+import { type Decision, createDecider } from "../core/decide.js";
 import { demoPage } from "./demo.js";
-import type { ClientMessage, DecisionSummary, ServerMessage } from "./protocol.js";
+import type { ClientMessage, DecisionSummary, ServerMessage } from "../core/protocol.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HEADLESS = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";

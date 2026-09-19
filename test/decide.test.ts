@@ -1,8 +1,8 @@
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { parseCommand } from "../server/commands.js";
-import { HeuristicDecider, JevDecider, THRESHOLDS, buildQuestions, decideHeuristically, interpretAnswers } from "../server/decide.js";
-import type { PageElement, PageSnapshot } from "../server/elements.js";
+import { parseCommand } from "../core/commands.js";
+import { HeuristicDecider, JevDecider, THRESHOLDS, buildQuestions, decideHeuristically, interpretAnswers } from "../core/decide.js";
+import type { PageElement, PageSnapshot } from "../core/elements.js";
 
 const el = (id: string, over: Partial<PageElement>): PageElement => ({
   id, tag: "a", role: "", type: "", text: "", label: "", placeholder: "", name: "", hrefShort: null, inViewport: true, ...over,
