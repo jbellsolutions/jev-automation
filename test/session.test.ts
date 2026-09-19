@@ -18,14 +18,16 @@ describe("Session: single commands", () => {
   it("decides, executes and reports one step", async () => {
     const { session, executor, messages, types } = make();
     const r = await session.command("open wikipedia.org");
-    expect(executor.snapshots).toBe(1);
     expect(executor.executed).toEqual([{ kind: "navigate", url: "https://wikipedia.org" }]);
     expect(r.ok).toBe(true);
     expect(r.steps).toHaveLength(1);
     expect(r.steps[0]!.decision?.intent).toBe("open_url");
     expect(r.steps[0]!.result).toEqual({ text: "did navigate", level: "ok" });
     expect(r.page.url).toBe("https://wikipedia.org");
-    expect(types()).toEqual(["transcript_ack", "status", "decision", "status", "status"]);
+    expect(types().slice(0, 5)).toEqual(["transcript_ack", "status", "decision", "status", "status"]);
+    await new Promise((r) => setTimeout(r, 0)); // background verification lands after the command resolves
+    expect(executor.snapshots).toBe(2);
+    expect(messages.at(-1)).toMatchObject({ type: "verify", command: "open wikipedia.org", verify: { done: true, source: "code" } });
     expect(messages.find((m) => m.type === "decision")).toMatchObject({ decision: { intent: "open_url", source: "heuristic" } });
   });
 
@@ -177,10 +179,11 @@ describe("Session: multi-step utterances", () => {
   it("runs each step against a fresh snapshot and announces the split", async () => {
     const { session, executor, messages } = make();
     const r = await session.command("open a.com and then open b.com and scroll down");
-    expect(executor.snapshots).toBe(3);
+    expect(executor.snapshots).toBe(6); // one before and one after each step
     expect(executor.executed.map((a) => a.kind)).toEqual(["navigate", "navigate", "scroll"]);
     expect(r.ok).toBe(true);
     expect(r.steps.map((s) => s.command)).toEqual(["open a.com", "open b.com", "scroll down"]);
+    expect(r.steps.map((s) => s.verify?.text)).toEqual(["done", "done", "done"]);
     expect(r.stoppedAt).toBeUndefined();
     expect(messages[0]).toEqual({ type: "steps", original: "open a.com and then open b.com and scroll down", commands: ["open a.com", "open b.com", "scroll down"] });
     const acks = messages.filter((m) => m.type === "transcript_ack");
@@ -273,5 +276,34 @@ describe("Session: multi-step utterances", () => {
     const r = await session.command("open a.com and stop and open b.com");
     expect(executor.executed.map((a) => a.kind)).toEqual(["navigate"]);
     expect(r.steps).toHaveLength(2);
+  });
+});
+
+describe("Session: verification in sequences", () => {
+  it("stops the sequence when a step is stuck, naming the blocker", async () => {
+    const { session, executor, messages } = make([el("e0", { tag: "button", text: "Next" })]);
+    // the fake page never changes, so clicking "Next" produces no diff → heuristic says stuck
+    const r = await session.command("click next and scroll down");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
+    expect(r.ok).toBe(false);
+    expect(r.stoppedAt).toBe(0);
+    expect(r.steps[0]!.verify).toMatchObject({ stuck: true, blocker: "no_change", source: "heuristic" });
+    expect(messages.at(-1)).toMatchObject({ type: "status", level: "warn", text: "Stopped after step 1 of 2: stuck: no change" });
+  });
+
+  it("a single stuck command is reported but not treated as a sequence failure", async () => {
+    const { session, executor } = make([el("e0", { tag: "button", text: "Next" })]);
+    const r = await session.command("click next");
+    expect(executor.executed).toHaveLength(1);
+    expect(r.ok).toBe(true);
+    expect(r.stoppedAt).toBeUndefined();
+  });
+
+  it("verify: off skips the after-snapshot entirely", async () => {
+    const executor = new FakeExecutor();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), verify: "off" });
+    const r = await session.command("open a.com and scroll down");
+    expect(executor.snapshots).toBe(2);
+    expect(r.steps.every((s) => s.verify === undefined)).toBe(true);
   });
 });

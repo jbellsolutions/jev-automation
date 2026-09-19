@@ -74,7 +74,8 @@ export function renderResult(r: CommandResult): string {
     const how = d ? ` [${d.source === "jev" ? (d.model ?? "jev") : "heuristic"} · ${d.intent} ${pct(d.intentConfidence)}${d.targetConfidence != null ? ` · target ${pct(d.targetConfidence)}` : ""} · ${d.latencyMs} ms]` : "";
     const did = d ? `→ ${d.actionLabel}` : "";
     const out = s.result ? ` ${s.result.level === "error" ? "✗" : s.result.level === "warn" ? "⚠" : "✓"} ${s.result.text}` : "";
-    lines.push(`${head}"${s.command}" ${did}${how}${out}`.trim());
+    const checked = s.verify ? ` (check: ${s.verify.text})` : "";
+    lines.push(`${head}"${s.command}" ${did}${how}${out}${checked}`.trim());
   });
   if (r.pending?.kind === "confirm") {
     lines.push(`⚠ Waiting for confirmation: ${r.pending.actionLabel} — ${r.pending.reason}`);

@@ -22,7 +22,16 @@ function Entry({ entry }: { entry: LogEntry }) {
           <div className="bar"><span style={{ width: `${Math.round(d.intentConfidence * 100)}%` }} /></div>
         </div>
       )}
-      {d && entry.result && <div className="result muted" style={{ color: resultColor[entry.result.level] }}>{entry.result.text}</div>}
+      {d && entry.result && (
+        <div className="result muted" style={{ color: resultColor[entry.result.level] }}>
+          {entry.result.text}
+          {entry.verify && (
+            <span className={`tag verify ${entry.verify.stuck ? "stuck" : entry.verify.done ? "done" : "undone"}`} title={`checked by ${entry.verify.source}${entry.verify.latencyMs ? ` in ${entry.verify.latencyMs} ms` : ""}`}>
+              {entry.verify.stuck ? "⛔" : entry.verify.done ? "✓" : "?"} {entry.verify.text}
+            </span>
+          )}
+        </div>
+      )}
     </li>
   );
 }

@@ -1,5 +1,5 @@
 /** All UI state in one place, derived purely from server messages + local events. */
-import type { DecisionSummary, ServerMessage } from "../../core/protocol.ts";
+import type { DecisionSummary, ServerMessage, VerifySummary } from "../../core/protocol.ts";
 
 export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 
@@ -10,6 +10,7 @@ export interface LogEntry {
   step?: { index: number; total: number; original: string };
   decision: DecisionSummary | null;
   result: { text: string; level: StatusLevel } | null;
+  verify?: VerifySummary;
 }
 
 export type Pending =
@@ -70,6 +71,14 @@ export function reducer(state: State, ev: Event): State {
     }
     case "decision":
       return { ...state, entries: updateLatest(state.entries, (e) => ({ ...e, decision: ev.decision })) };
+    case "verify": {
+      // attach to the newest entry for that command (background checks can land after later commands)
+      const idx = state.entries.findIndex((e) => e.said === ev.command && !e.verify);
+      if (idx === -1) return state;
+      const entries = state.entries.slice();
+      entries[idx] = { ...entries[idx]!, verify: ev.verify };
+      return { ...state, entries };
+    }
     case "confirm":
       return { ...state, pending: { kind: "confirm", actionLabel: ev.actionLabel, reason: ev.reason }, status: { text: "Waiting for confirmation…", level: "warn" } };
     case "clarify":

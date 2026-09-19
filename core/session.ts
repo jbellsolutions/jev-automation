@@ -5,9 +5,11 @@
 import { type Action, describeAction } from "./actions.js";
 import { parseOrdinal, splitSteps } from "./commands.js";
 import type { Decider, Decision } from "./decide.js";
+import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
-import type { DecisionSummary, ServerMessage, StepInfo } from "./protocol.js";
+import type { DecisionSummary, ServerMessage, StepInfo, VerifySummary } from "./protocol.js";
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
+import { type VerifyResult, describeVerify } from "./verify.js";
 
 export type Pending =
   | { kind: "confirm"; action: Action; label: string; reason: string }
@@ -27,6 +29,9 @@ export interface SessionDeps {
   decider: Decider;
   /** Called after every action that may have changed the surface (a host pushes a frame). */
   afterAction?: () => void | Promise<void>;
+  /** "off": never check outcomes. Sequences always check (blocking); single commands check
+   *  in the background so they stay as fast as before. */
+  verify?: "on" | "off";
 }
 
 export function summarize(d: Decision): DecisionSummary {
@@ -133,7 +138,8 @@ export class Session {
         step.result = this.report(`Cancelled: ${pending.label}`, "warn");
         return this.finish([step], true);
       }
-      step.result = await this.runAction(pending.action);
+      const outcome = await this.runAction(pending.action);
+      step.result = { text: outcome.text, level: outcome.level };
       return this.resume([step], rest);
     });
   }
@@ -146,7 +152,8 @@ export class Session {
       this.pending = null;
       const step: StepResult = { command: `pick ${elementId}`, decision: null, result: null };
       if (!opt) return this.finish([step], false);
-      step.result = await this.runAction({ kind: "click", elementId: opt.elementId, label: opt.label });
+      const outcome = await this.runAction({ kind: "click", elementId: opt.elementId, label: opt.label });
+      step.result = { text: outcome.text, level: outcome.level };
       return this.resume([step], rest);
     });
   }
@@ -186,16 +193,37 @@ export class Session {
     return result;
   }
 
-  private async runAction(action: Action): Promise<{ text: string; level: StatusLevel }> {
+  private async runAction(action: Action): Promise<{ text: string; level: StatusLevel; error: string | null }> {
     this.report(describeAction(action) + "…", "busy");
-    let outcome: { text: string; level: StatusLevel };
+    let outcome: { text: string; level: StatusLevel; error: string | null };
     try {
-      outcome = this.report(await this.executor.execute(action), "ok");
+      outcome = { ...this.report(await this.executor.execute(action), "ok"), error: null };
     } catch (err) {
-      outcome = this.report(errMsg(err), "error");
+      outcome = { ...this.report(errMsg(err), "error"), error: errMsg(err) };
     }
     await this.deps.afterAction?.();
     return outcome;
+  }
+
+  private static summarizeVerify(v: VerifyResult): VerifySummary {
+    return { done: v.done, stuck: v.stuck, doneProbability: v.doneProbability, blocker: v.blocker, source: v.source, latencyMs: v.meta.latencyMs, text: describeVerify(v) };
+  }
+
+  /** Check a step's outcome against a fresh snapshot; never throws. */
+  private async verifyStep(step: StepResult, action: Action, before: PageSnapshot, error: string | null): Promise<VerifySummary | null> {
+    if (this.deps.verify === "off") return null;
+    try {
+      const after = await this.executor.snapshot();
+      const v = await this.decider.verify({ command: step.command, expectation: null, action, before, after, error });
+      const summary = Session.summarizeVerify(v);
+      step.verify = summary;
+      this.emit({ type: "verify", command: step.command, verify: summary });
+      if (v.meta.fallbackReason) this.report(`Jev unavailable for verification (${v.meta.fallbackReason}); used heuristics`, "warn");
+      return summary;
+    } catch (err) {
+      this.report(`Verification failed: ${errMsg(err)}`, "warn");
+      return null;
+    }
   }
 
   private takeContinuation(): Continuation | null {
@@ -227,7 +255,8 @@ export class Session {
           step.result = this.report(`Cancelled: ${pending.label}`, "warn");
           return this.finish([step], true);
         }
-        step.result = await this.runAction(pending.action);
+        const outcome = await this.runAction(pending.action);
+        step.result = { text: outcome.text, level: outcome.level };
         return this.resume([step], rest);
       }
       this.pending = null; // a new command supersedes the question and whatever was queued behind it
@@ -242,7 +271,8 @@ export class Session {
       if (picked) {
         this.emit({ type: "transcript_ack", text: trimmed });
         const step: StepResult = { command: trimmed, decision: null, result: null };
-        step.result = await this.runAction({ kind: "click", elementId: picked.elementId, label: picked.label });
+        const outcome = await this.runAction({ kind: "click", elementId: picked.elementId, label: picked.label });
+        step.result = { text: outcome.text, level: outcome.level };
         return this.resume([step], rest);
       }
     }
@@ -261,8 +291,12 @@ export class Session {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
       this.emit(info ? { type: "transcript_ack", text: command, step: info } : { type: "transcript_ack", text: command });
-      const step = await this.runStep(command);
+      const step = await this.runStep(command, total > 1 ? "blocking" : "async");
       steps.push(step);
+      if (step.verify?.stuck) {
+        if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");
+        return this.finish(steps, false, i);
+      }
       if (this.pending) {
         this.continuation = i + 1 < total ? { original, commands, index: i } : null;
         return this.finish(steps, true, i + 1 < total ? i : undefined);
@@ -277,8 +311,8 @@ export class Session {
     return this.finish(steps, true);
   }
 
-  /** One command against a fresh snapshot: decide, gate, execute. May leave `pending` set. */
-  private async runStep(command: string): Promise<StepResult> {
+  /** One command against a fresh snapshot: decide, gate, execute, check. May leave `pending` set. */
+  private async runStep(command: string, verifyMode: "blocking" | "async"): Promise<StepResult> {
     const step: StepResult = { command, decision: null, result: null };
     this.report("Thinking…", "busy");
     this.inFlight?.abort();
@@ -317,7 +351,10 @@ export class Session {
       this.emit({ type: "confirm", actionLabel: label, reason });
       return step;
     }
-    step.result = await this.runAction(decision.action);
+    const outcome = await this.runAction(decision.action);
+    step.result = { text: outcome.text, level: outcome.level };
+    if (verifyMode === "blocking") await this.verifyStep(step, decision.action, snapshot, outcome.error);
+    else void this.verifyStep(step, decision.action, snapshot, outcome.error);
     return step;
   }
 }

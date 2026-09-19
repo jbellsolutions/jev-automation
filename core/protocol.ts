@@ -1,4 +1,5 @@
 import type { Action } from "./actions.js";
+import type { Blocker } from "./verify.js";
 
 /** WebSocket messages, browser UI -> server. */
 export type ClientMessage =
@@ -38,7 +39,20 @@ export type ServerMessage =
   /** One per step; `step` is present only when the utterance was split into several. */
   | { type: "transcript_ack"; text: string; step?: StepInfo }
   /** Announces how an utterance was split, before the first step's ack. */
-  | { type: "steps"; original: string; commands: string[] };
+  | { type: "steps"; original: string; commands: string[] }
+  /** Outcome check for the step whose command is `command` (the most recent entry with that text). */
+  | { type: "verify"; command: string; verify: VerifySummary };
+
+export interface VerifySummary {
+  done: boolean;
+  stuck: boolean;
+  doneProbability: number;
+  blocker: Blocker;
+  source: "code" | "jev" | "heuristic";
+  latencyMs: number;
+  /** Human-readable, e.g. "done 84%", "stuck: login wall". */
+  text: string;
+}
 
 export interface StepInfo {
   index: number;

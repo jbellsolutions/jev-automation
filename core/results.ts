@@ -2,7 +2,7 @@
  *  The WebSocket UIs get the same information incrementally as ServerMessages. */
 import type { Alternative } from "./decide.js";
 import type { ExecutorCapabilities, ExecutorKind } from "./executor.js";
-import type { DecisionSummary, ServerMessage } from "./protocol.js";
+import type { DecisionSummary, ServerMessage, VerifySummary } from "./protocol.js";
 
 export type StatusLevel = Extract<ServerMessage, { type: "status" }>["level"];
 
@@ -11,6 +11,8 @@ export interface StepResult {
   decision: DecisionSummary | null;
   /** The outcome line shown in the UI, or null when the step ended in a question. */
   result: { text: string; level: StatusLevel } | null;
+  /** Present when the outcome was checked (always in sequences, best-effort otherwise). */
+  verify?: VerifySummary;
 }
 
 export type PendingSummary =

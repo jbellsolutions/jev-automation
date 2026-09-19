@@ -68,6 +68,10 @@ button.link { background: none; border: none; color: var(--muted); padding: 0; t
 .entry { padding: 10px 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--border); }
 .entry .said { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .entry .said .tag.step { font-weight: 500; }
+.entry .result { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag.verify.done { border-color: var(--accent-2); color: var(--accent-2); }
+.tag.verify.stuck { border-color: var(--danger); color: var(--danger); }
+.tag.verify.undone { border-color: var(--warn); color: var(--warn); }
 .entry .said::before { content: "🎙 "; }
 .entry .did { margin-top: 4px; }
 .entry .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

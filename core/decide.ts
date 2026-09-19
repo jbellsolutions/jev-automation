@@ -11,6 +11,7 @@ import type { Action, ScrollDirection } from "./actions.js";
 import { describeAction } from "./actions.js";
 import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo } from "./commands.js";
 import { NONE_OPTION, type PageElement, type PageSnapshot, describeElement, elementCriteria } from "./elements.js";
+import { type VerifyInput, type VerifyResult, buildVerifyQuestions, buildVerifyState, heuristicVerdict, interpretVerifyAnswers, quickVerdict } from "./verify.js";
 
 export const INTENTS = {
   open_url: {
@@ -355,6 +356,8 @@ export interface Decider {
   readonly model: string | null;
   decide(raw: string, snapshot: PageSnapshot, signal?: AbortSignal): Promise<Decision>;
   classifyReply(raw: string, pendingActionLabel: string): Promise<ReplyKind>;
+  /** Did the action achieve the step? Code decides the obvious cases; Jev the rest. */
+  verify(input: VerifyInput, signal?: AbortSignal): Promise<VerifyResult>;
 }
 
 export class HeuristicDecider implements Decider {
@@ -369,6 +372,10 @@ export class HeuristicDecider implements Decider {
   async classifyReply(raw: string): Promise<ReplyKind> {
     const yn = parseYesNo(raw);
     return yn === null ? "other" : yn ? "confirm" : "cancel";
+  }
+  async verify(input: VerifyInput): Promise<VerifyResult> {
+    const state = buildVerifyState(input);
+    return quickVerdict(state, input.action) ?? heuristicVerdict(state);
   }
 }
 
@@ -395,6 +402,24 @@ export class JevDecider implements Decider {
       d.meta.latencyMs = Math.round(performance.now() - t0);
       d.meta.fallbackReason = err instanceof Error ? err.message : String(err);
       return d;
+    }
+  }
+
+  async verify(input: VerifyInput, signal?: AbortSignal): Promise<VerifyResult> {
+    const state = buildVerifyState(input);
+    const quick = quickVerdict(state, input.action);
+    if (quick) return quick;
+    const t0 = performance.now();
+    try {
+      const res = await this.client.systemOne({ state, questions: buildVerifyQuestions(state) }, { signal, timeout: 6000 });
+      const v = interpretVerifyAnswers(res.answers);
+      v.meta = { latencyMs: Math.round(performance.now() - t0), inputTokens: res.usage.input_tokens };
+      return v;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      const v = heuristicVerdict(state);
+      v.meta = { latencyMs: Math.round(performance.now() - t0), fallbackReason: err instanceof Error ? err.message : String(err) };
+      return v;
     }
   }
 
