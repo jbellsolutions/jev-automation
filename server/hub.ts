@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { WebSocket } from "ws";
 import type { Decider } from "../core/decide.js";
+import type { Speaker } from "../core/speak.js";
 import type { Executor } from "../core/executor.js";
 import type { ServerMessage } from "../core/protocol.js";
 import type { SessionStatus } from "../core/results.js";
@@ -68,6 +69,7 @@ export interface HubOptions {
   defaultSession?: string;
   /** Name of the streaming STT provider, announced to UIs so they can pick voice input. */
   sttProvider?: string | null;
+  speaker?: Speaker | null;
 }
 
 export class Hub {
@@ -81,7 +83,7 @@ export class Hub {
     if (this.entries.has(id)) throw new Error(`Session ${id} already registered`);
     const clients = new Set<WebSocket>();
     const streamer = new FrameStreamer(executor, (msg) => this.broadcast(id, msg), this.opts.screenshotIntervalMs);
-    const session = new Session(id, { executor, decider: this.opts.decider, afterAction: () => streamer.push(true) });
+    const session = new Session(id, { executor, decider: this.opts.decider, speaker: this.opts.speaker, afterAction: () => streamer.push(true) });
     const unsubSession = session.subscribe((msg) => this.broadcast(id, msg));
     const unsubChange = executor.onChange(() => streamer.markDirty());
     this.entries.set(id, {

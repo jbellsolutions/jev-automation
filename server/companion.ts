@@ -8,6 +8,7 @@ import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import type { Decider } from "../core/decide.js";
 import type { Executor } from "../core/executor.js";
+import type { Speaker } from "../core/speak.js";
 import type { ClientMessage } from "../core/protocol.js";
 import { type Auth, allowedOrigins, createAuth, originAllowed } from "./auth.js";
 import { demoPage } from "./demo.js";
@@ -27,6 +28,8 @@ export interface CompanionOptions {
   extraOrigins?: string[];
   /** Streaming speech-to-text for /ws/stt; without one, UIs fall back to Web Speech. */
   stt?: SttProvider | null;
+  /** Reads replies to voice commands aloud. */
+  speaker?: Speaker | null;
 }
 
 export interface Companion {
@@ -45,6 +48,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
     screenshotIntervalMs: opts.screenshotIntervalMs ?? 700,
     defaultSession: opts.defaultSession,
     sttProvider: opts.stt?.name ?? null,
+    speaker: opts.speaker,
   });
 
   const app = express();
@@ -87,7 +91,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
       if (!session) return;
       switch (msg.type) {
         case "command":
-          if (typeof msg.text === "string") void session.command(msg.text);
+          if (typeof msg.text === "string") void session.command(msg.text, { speak: msg.via === "voice" });
           break;
         case "confirm_reply":
           void session.reply(!!msg.ok);

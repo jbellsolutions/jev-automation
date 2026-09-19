@@ -7,6 +7,7 @@ import { parseOrdinal, splitSteps } from "./commands.js";
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
+import { type Speaker, spokenSummary } from "./speak.js";
 import type { DecisionSummary, ServerMessage, StepInfo, VerifySummary } from "./protocol.js";
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
 import { type VerifyResult, describeVerify } from "./verify.js";
@@ -32,6 +33,8 @@ export interface SessionDeps {
   /** "off": never check outcomes. Sequences always check (blocking); single commands check
    *  in the background so they stay as fast as before. */
   verify?: "on" | "off";
+  /** Spoken replies for commands that arrive by voice. */
+  speaker?: Speaker | null;
 }
 
 export function summarize(d: Decision): DecisionSummary {
@@ -129,13 +132,41 @@ export class Session {
   }
 
   /** A spoken or typed command. Resolves when the command has been acted on or has left a
-   *  question open; never rejects. */
-  command(text: string): Promise<CommandResult> {
-    return this.enqueue(() => this.handleCommand(text));
+   *  question open; never rejects. With `speak`, the outcome is also read aloud. */
+  command(text: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
+    return this.voiced(this.enqueue(() => this.handleCommand(text)), opts.speak);
+  }
+
+  private voiced(result: Promise<CommandResult>, speak: boolean | undefined): Promise<CommandResult> {
+    if (!speak || !this.deps.speaker) return result;
+    return result.then((r) => {
+      this.say(spokenSummary(r));
+      return r;
+    });
+  }
+
+  private speakingRun = 0;
+  /** Read `text` aloud, interrupting anything still being said. UIs get `speaking` so they can
+   *  mute the microphone while the assistant talks. */
+  say(text: string): void {
+    const speaker = this.deps.speaker;
+    if (!speaker || !text) return;
+    const run = ++this.speakingRun;
+    this.emit({ type: "speaking", active: true });
+    speaker
+      .speak(text)
+      .catch(() => {})
+      .finally(() => {
+        if (run === this.speakingRun) this.emit({ type: "speaking", active: false });
+      });
   }
 
   /** Answer to a pending confirmation from a UI control (as opposed to a spoken reply). */
-  reply(ok: boolean): Promise<CommandResult> {
+  reply(ok: boolean, opts: { speak?: boolean } = {}): Promise<CommandResult> {
+    return this.voiced(this.replyInner(ok), opts.speak);
+  }
+
+  private replyInner(ok: boolean): Promise<CommandResult> {
     return this.enqueue(async () => {
       const pending = this.pending?.kind === "confirm" ? this.pending : null;
       const rest = this.takeContinuation();
@@ -152,7 +183,11 @@ export class Session {
   }
 
   /** A clarification option chosen from a UI control. */
-  pick(elementId: string): Promise<CommandResult> {
+  pick(elementId: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
+    return this.voiced(this.pickInner(elementId), opts.speak);
+  }
+
+  private pickInner(elementId: string): Promise<CommandResult> {
     return this.enqueue(async () => {
       const pending = this.pending?.kind === "clarify" ? this.pending : null;
       const opt = pending?.decision.clarify?.options.find((o) => o.elementId === elementId);
@@ -188,6 +223,7 @@ export class Session {
 
   /** Drop whatever is in flight or pending. Bypasses the queue on purpose. */
   cancel(): void {
+    this.deps.speaker?.stop();
     this.inFlight?.abort();
     this.pending = null;
     this.continuation = null;

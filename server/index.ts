@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "./companion.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
+import { selectSpeaker } from "./speak/say.js";
 import { selectSttProvider } from "./stt/select.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -17,12 +18,14 @@ const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 
 const decider = createDecider();
 const stt = selectSttProvider();
+const speaker = selectSpeaker();
 const companion = createCompanion({
   decider,
   token: process.env.JEV_TOKEN,
   clientDir,
   defaultSession: process.env.JEV_DEFAULT_SESSION,
   stt,
+  speaker,
 });
 const playwright = new PlaywrightExecutor({
   headless: HEADLESS,
@@ -42,7 +45,8 @@ async function main(): Promise<void> {
   console.log(`Jev voice browser → http://localhost:${port}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
-  console.log(stt ? `Voice: streaming via ${stt.name}` : "Voice: browser Web Speech (set DEEPGRAM_API_KEY for streaming transcription)");
+  console.log(stt ? `Voice in: streaming via ${stt.name}` : "Voice in: browser Web Speech (set DEEPGRAM_API_KEY or run npm run build:native for streaming transcription)");
+  console.log(speaker ? "Voice out: macOS say" : "Voice out: off");
 }
 
 const shutdown = async () => {
