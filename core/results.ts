@@ -16,6 +16,8 @@ export interface StepResult {
   result: { text: string; level: StatusLevel } | null;
   /** Present when the outcome was checked (always in sequences, best-effort otherwise). */
   verify?: VerifySummary;
+  /** "brain" when the step was handed to the agent (its answer arrives later as brain events). */
+  lane?: "brain";
 }
 
 export type PendingSummary =

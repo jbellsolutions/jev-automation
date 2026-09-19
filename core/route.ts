@@ -47,6 +47,11 @@ export function appRequest(text: string): string | null {
 }
 
 const STOP = /^(?:stop|cancel|halt|wait|never ?mind|abort|hold on)(?:\s+(?:that|it|this|everything))?$/;
+
+/** "stop", "cancel that", "never mind": halts everything, never counts as an answer. */
+export function isStopWord(text: string): boolean {
+  return STOP.test(text.trim().toLowerCase().replace(/[.!?,]+$/, ""));
+}
 const QUESTION = /^(?:what|what's|whats|who|who's|when|where|why|how|which|is|are|am|do|does|did|can|could|would|should|will|tell me|remind me|explain|summarize|summarise|help me|remember|recall)\b/;
 const TASK_VERB = /^(?:find me|research|write|draft|compose|email|message|text|send|schedule|book|plan|create|make|build|check|look into|compare|list|get me|read|delete|move|copy|rename|run|install|update|download)\b/;
 

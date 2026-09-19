@@ -35,19 +35,21 @@ function lastResult(steps: StepResult[]): StepResult | undefined {
  *  outcome of the last step that ran (prefixed with "Done" for multi-step successes). */
 export function spokenSummary(r: CommandResult): string {
   if (r.pending?.kind === "confirm") return clip(`${r.pending.actionLabel}? ${r.pending.reason}`);
-  if (r.pending?.kind === "approval") return clip(r.pending.question);
   if (r.pending?.kind === "clarify") {
     const names = r.pending.options.slice(0, 4).map((o) => o.label);
     const list = names.length > 1 ? `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}` : (names[0] ?? "");
     return clip(`${r.pending.question} ${list}`);
   }
   const last = lastResult(r.steps);
-  if (!last?.result) return "";
+  // a parked brain approval is read out after this command's outcome, so the user knows what is waiting
+  const tail = r.pending?.kind === "approval" ? r.pending.question : "";
+  const withTail = (text: string) => clip(tail ? `${text} ${tail}`.trim() : text);
+  if (!last?.result) return withTail("");
   // a step handed to the brain was acknowledged aloud when it left; its answer is spoken when it arrives
-  if (last.decision?.route === "hermes" && last.result.level === "ok") return "";
+  if (last.lane === "brain" && last.result.level === "ok") return withTail("");
   const outcome = last.result.text;
-  if (last.result.level === "error" || last.result.level === "warn") return clip(outcome);
-  if (last.verify?.stuck) return clip(`${outcome}, but it looks stuck: ${last.verify.text}`);
+  if (last.result.level === "error" || last.result.level === "warn") return withTail(outcome);
+  if (last.verify?.stuck) return withTail(`${outcome}, but it looks stuck: ${last.verify.text}`);
   const ran = r.steps.filter((s) => s.result).length;
-  return clip(ran > 1 && r.ok ? `Done. ${outcome}` : outcome);
+  return withTail(ran > 1 && r.ok ? `Done. ${outcome}` : outcome);
 }

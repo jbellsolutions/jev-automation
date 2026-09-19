@@ -29,8 +29,10 @@ export interface BrainProgress {
 export type Pending =
   | { kind: "confirm"; actionLabel: string; reason: string }
   | { kind: "clarify"; question: string; options: Array<{ elementId: string; label: string; probability: number }> }
-  | { kind: "approval"; runId: string; question: string; choices: ApprovalChoice[] }
   | null;
+
+/** The brain's open approval request; independent of the browser question so neither hides the other. */
+export type Approval = { runId: string; question: string; choices: ApprovalChoice[] } | null;
 
 export interface State {
   connected: boolean;
@@ -44,9 +46,10 @@ export interface State {
   status: { text: string; level: StatusLevel };
   entries: LogEntry[];
   pending: Pending;
+  approval: Approval;
 }
 
-export type Event = ServerMessage | { type: "socket"; connected: boolean } | { type: "clear_log" } | { type: "dismiss_pending" };
+export type Event = ServerMessage | { type: "socket"; connected: boolean } | { type: "clear_log" } | { type: "dismiss_pending" } | { type: "dismiss_approval" };
 
 export const initialState: State = {
   connected: false,
@@ -58,6 +61,7 @@ export const initialState: State = {
   status: { text: "Connecting…", level: "info" },
   entries: [],
   pending: null,
+  approval: null,
 };
 
 const MAX_ENTRIES = 40;
@@ -122,18 +126,18 @@ function applyBrainEvent(state: State, stepId: number, runId: string, event: Bra
             : entry.result;
     entries[idx] = { ...entry, brain, result };
   }
-  let pending = state.pending;
+  let approval = state.approval;
   let status = state.status;
   if (event.kind === "approval") {
-    pending = { kind: "approval", runId, question: `Hermes wants to ${event.summary}. Allow it?`, choices: event.choices };
+    approval = { runId, question: `Hermes wants to ${event.summary}. Allow it?`, choices: event.choices };
     status = { text: "Hermes is waiting for your approval", level: "warn" };
-  } else if (pending?.kind === "approval" && pending.runId === runId && (event.kind === "approved" || event.kind === "completed" || event.kind === "failed" || event.kind === "cancelled")) {
-    pending = null;
+  } else if (approval?.runId === runId && (event.kind === "approved" || event.kind === "completed" || event.kind === "failed" || event.kind === "cancelled")) {
+    approval = null;
   }
   if (event.kind === "completed") status = { text: "Hermes: done", level: "ok" };
   else if (event.kind === "failed") status = { text: `Hermes: ${event.error}`, level: "error" };
   else if (event.kind === "cancelled") status = { text: "Hermes: stopped", level: "warn" };
-  return { ...state, entries, pending, status };
+  return { ...state, entries, approval, status };
 }
 
 function firstLine(text: string): string {
@@ -182,6 +186,8 @@ export function reducer(state: State, ev: Event): State {
       return applyBrainEvent(state, ev.stepId, ev.runId, ev.event);
     case "dismiss_pending":
       return { ...state, pending: null };
+    case "dismiss_approval":
+      return { ...state, approval: null };
     case "clear_log":
       return { ...state, entries: [] };
     default:

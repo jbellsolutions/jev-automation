@@ -9,7 +9,7 @@ export class FakeBrain implements Brain {
   stops: string[] = [];
   failSend: string | null = null;
   private runs = 0;
-  private feeds = new Map<string, { push: (e: BrainEvent | null) => void }>();
+  private feeds = new Map<string, { push: (e: BrainEvent | null) => void; fail?: (err: Error) => void }>();
 
   async send(text: string): Promise<BrainRun> {
     if (this.failSend) throw new Error(this.failSend);
@@ -17,21 +17,35 @@ export class FakeBrain implements Brain {
     const id = `run_${++this.runs}`;
     const queue: Array<BrainEvent | null> = [];
     let wake: (() => void) | null = null;
+    let failure: Error | null = null;
     const push = (e: BrainEvent | null) => {
       queue.push(e);
       wake?.();
     };
-    this.feeds.set(id, { push });
+    const fail = (err: Error) => {
+      failure = err;
+      wake?.();
+    };
+    this.feeds.set(id, { push, fail });
     const events = (async function* () {
       for (;;) {
-        if (queue.length === 0) await new Promise<void>((r) => (wake = r));
+        if (queue.length === 0 && !failure) await new Promise<void>((r) => (wake = r));
         wake = null;
+        if (failure) throw failure;
         const e = queue.shift()!;
         if (e === null) return;
         yield e;
       }
     })();
     return { id, events };
+  }
+
+  /** Make a run's event stream throw (a dropped socket the client could not recover from). */
+  throwOn(runId: string, err: Error): void {
+    const feed = this.feeds.get(runId);
+    if (!feed) throw new Error(`no run ${runId}`);
+    feed.push({ kind: "delta", text: "" }); // wake the consumer…
+    feed.fail?.(err);
   }
 
   /** Feed events into a run; null ends the stream. */

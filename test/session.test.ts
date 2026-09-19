@@ -498,3 +498,107 @@ describe("Session: brain lane (Hermes)", () => {
     expect(mac.steps[0]!.result).toMatchObject({ level: "warn", text: /can't open apps/ });
   });
 });
+
+describe("Session: brain approval beside a browser question", () => {
+  class FakeSpeaker {
+    said: string[] = [];
+    async speak(text: string) { this.said.push(text); }
+    stop() {}
+  }
+  const risky = [el("e0", { tag: "button", text: "Delete account" })];
+  function both() {
+    const executor = new FakeExecutor(risky);
+    const brain = new FakeBrain();
+    const speaker = new FakeSpeaker();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker });
+    return { executor, brain, speaker, session };
+  }
+
+  it("neither question clobbers the other; a spoken yes answers the browser first, then the approval is read out", async () => {
+    const { session, brain, executor, speaker } = both();
+    await session.command("summarize my week", { speak: true });
+    const c = await session.command("click delete account", { speak: true });
+    expect(c.pending?.kind).toBe("confirm");
+    brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
+    await tick();
+    expect(session.pending?.kind).toBe("confirm");
+    expect(session.approval?.runId).toBe("run_1");
+    expect(speaker.said.some((t) => /calendar/.test(t))).toBe(false); // not spoken over the open browser question
+    const r = await session.command("yes", { speak: true });
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
+    expect(brain.approvals).toEqual([]);
+    expect(r.ok).toBe(true); // the parked approval does not fail the command…
+    expect(r.pending).toEqual({ kind: "approval", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
+    expect(speaker.said.at(-1)).toBe("did click Hermes wants to read your calendar. Allow it?"); // …but is read out with its outcome
+    const a = await session.command("yes", { speak: true });
+    expect(brain.approvals).toEqual([{ runId: "run_1", choice: "once", requestId: "r1" }]);
+    expect(a.steps[0]!.result?.text).toBe("Allowed: read your calendar");
+  });
+
+  it("a browser question arriving while an approval is parked keeps both; the UI can answer each", async () => {
+    const { session, brain, executor } = both();
+    await session.command("summarize my week");
+    brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
+    await tick();
+    await session.command("click delete account");
+    expect(session.pending?.kind).toBe("confirm");
+    expect(session.approval?.runId).toBe("run_1");
+    expect((await session.status()).pending?.kind).toBe("confirm");
+    await session.approve("deny");
+    expect(brain.approvals).toEqual([{ runId: "run_1", choice: "deny", requestId: "r1" }]);
+    expect(session.pending?.kind).toBe("confirm"); // untouched
+    await session.reply(true);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
+  });
+
+  it("stop during a pending approval stops the run instead of denying", async () => {
+    const { session, brain } = both();
+    await session.command("summarize my week");
+    brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
+    await tick();
+    const r = await session.command("stop");
+    expect(brain.approvals).toEqual([]);
+    expect(brain.stops).toEqual(["run_1"]);
+    expect(session.approval).toBeNull();
+    expect(r.steps[0]!.result).toEqual({ text: "Stopped", level: "ok" });
+  });
+
+  it("a stop word inside a browser confirm cancels it and stops the brain too", async () => {
+    const { session, brain } = both();
+    await session.command("summarize my week");
+    await session.command("click delete account");
+    await session.command("never mind");
+    expect(brain.stops).toEqual(["run_1"]);
+    expect(session.pending).toBeNull();
+  });
+});
+
+describe("Session: spoken feedback in degraded modes", () => {
+  class FakeSpeaker {
+    said: string[] = [];
+    async speak(text: string) { this.said.push(text); }
+    stop() {}
+  }
+  it("without a brain, a hermes-routed command that ran locally is still spoken", async () => {
+    const executor = new FakeExecutor();
+    const speaker = new FakeSpeaker();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), speaker });
+    await session.command("find me 20 dentists in austin", { speak: true });
+    expect(executor.executed.map((a) => a.kind)).toEqual(["search"]);
+    expect(speaker.said).toHaveLength(1);
+    expect(speaker.said[0]).toMatch(/^did search/); // the fake page never changes, so the check adds a "stuck" note
+  });
+
+  it("a brain stream that throws is spoken, and ask() resolves", async () => {
+    const executor = new FakeExecutor();
+    const speaker = new FakeSpeaker();
+    const brain = new FakeBrain();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker });
+    const asked = session.ask("what's the weather", { speak: true });
+    await tick();
+    brain.throwOn("run_1", new Error("socket hang up"));
+    const r = await asked;
+    expect(r).toMatchObject({ ok: false, output: "socket hang up" });
+    expect(speaker.said.at(-1)).toBe("Hermes dropped out: socket hang up");
+  });
+});

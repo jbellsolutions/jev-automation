@@ -37,12 +37,16 @@ describe("reducer: brain events", () => {
 
   it("raises and clears the approval card", () => {
     const s = run([...start, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] } }]);
-    expect(s.pending).toEqual({ kind: "approval", runId: "run_1", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
+    expect(s.approval).toEqual({ runId: "run_1", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
     expect(s.entries[1]!.brain?.state).toBe("waiting");
-    // a browser outcome does not dismiss it; the brain's own events do
-    expect(reducer(s, { type: "status", text: "Scrolled", level: "ok" }).pending?.kind).toBe("approval");
-    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approved", choice: "once" } }).pending).toBeNull();
-    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "failed", error: "boom" } })).toMatchObject({ pending: null, status: { level: "error" } });
+    // a browser question and outcome live in their own slot; the brain's own events clear the approval
+    const both = reducer(s, { type: "confirm", actionLabel: "Click Delete", reason: "risky" });
+    expect(both.pending?.kind).toBe("confirm");
+    expect(both.approval?.runId).toBe("run_1");
+    expect(reducer(both, { type: "status", text: "Cancelled: Click Delete", level: "warn" })).toMatchObject({ pending: null, approval: { runId: "run_1" } });
+    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approved", choice: "once" } }).approval).toBeNull();
+    expect(reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "failed", error: "boom" } })).toMatchObject({ approval: null, status: { level: "error" } });
+    expect(reducer(s, { type: "dismiss_approval" }).approval).toBeNull();
   });
 });
 

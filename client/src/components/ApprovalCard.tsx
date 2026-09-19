@@ -1,10 +1,10 @@
 import type { ApprovalChoice } from "../../../core/brain.ts";
-import type { Pending } from "../state.ts";
+import type { Approval } from "../state.ts";
 
 const LABELS: Record<ApprovalChoice, string> = { once: "Allow once", session: "Allow this session", always: "Always allow", deny: "Deny" };
 
 /** The brain asked before doing something; a spoken "yes"/"no" answers it too. */
-export function ApprovalCard({ pending, onChoose }: { pending: Extract<Pending, { kind: "approval" }>; onChoose: (choice: ApprovalChoice) => void }) {
+export function ApprovalCard({ pending, onChoose }: { pending: NonNullable<Approval>; onChoose: (choice: ApprovalChoice) => void }) {
   const allow = pending.choices.filter((c) => c !== "deny");
   return (
     <div id="approval" className="card approval">

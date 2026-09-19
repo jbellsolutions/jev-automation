@@ -80,12 +80,12 @@ export function App() {
               }}
             />
           )}
-          {state.pending?.kind === "approval" && (
+          {state.approval && (
             <ApprovalCard
-              pending={state.pending}
+              pending={state.approval}
               onChoose={(choice) => {
                 send({ type: "approval_reply", choice });
-                dispatch({ type: "dismiss_pending" });
+                dispatch({ type: "dismiss_approval" });
               }}
             />
           )}

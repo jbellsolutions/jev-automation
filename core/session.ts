@@ -5,6 +5,7 @@
 import { type Action, describeAction } from "./actions.js";
 import { type ApprovalChoice, type Brain, type BrainRun, approvalChoice } from "./brain.js";
 import { parseOrdinal, splitSteps } from "./commands.js";
+import { isStopWord } from "./route.js";
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
@@ -13,12 +14,22 @@ import type { DecisionSummary, ServerMessage, StepInfo, VerifySummary } from "./
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
 import { type VerifyResult, describeVerify } from "./verify.js";
 
+/** A question the browser lane left open. Set and cleared inside the command queue. */
 export type Pending =
   | { kind: "confirm"; action: Action; label: string; reason: string; before: PageSnapshot; command: string }
   | { kind: "clarify"; decision: Decision; before: PageSnapshot; command: string }
-  /** The brain asked before doing something; the run waits until a human answers. */
-  | { kind: "approval"; runId: string; requestId: string | null; summary: string; choices: ApprovalChoice[] }
   | null;
+
+/** The brain asked before doing something; its run waits until a human answers. Lives in its
+ *  own slot because it arrives outside the queue and must never clobber (or be clobbered by)
+ *  a browser question. A spoken yes/no answers the browser question first; the approval is
+ *  spoken once nothing else is waiting. */
+export interface ApprovalPending {
+  runId: string;
+  requestId: string | null;
+  summary: string;
+  choices: ApprovalChoice[];
+}
 
 /** The brain run in progress, if any. Runs outside the command queue so browser commands and
  *  spoken approvals keep flowing while the agent works. */
@@ -87,6 +98,7 @@ const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(er
 
 export class Session {
   pending: Pending = null;
+  approval: ApprovalPending | null = null;
   private continuation: Continuation | null = null;
   private brain: BrainState | null = null;
   private nextStepId = 1;
@@ -144,13 +156,22 @@ export class Session {
     return run;
   }
 
+  /** The browser question, else the brain's approval request. */
   pendingSummary(): PendingSummary {
+    return this.localPendingSummary() ?? this.approvalSummary();
+  }
+
+  private localPendingSummary(): PendingSummary {
     const p = this.pending;
     if (!p) return null;
     if (p.kind === "confirm") return { kind: "confirm", actionLabel: p.label, reason: p.reason };
-    if (p.kind === "approval") return { kind: "approval", question: Session.approvalQuestion(p.summary), choices: p.choices };
     const c = p.decision.clarify;
     return c ? { kind: "clarify", question: c.question, options: c.options } : null;
+  }
+
+  private approvalSummary(): PendingSummary {
+    const a = this.approval;
+    return a ? { kind: "approval", question: Session.approvalQuestion(a.summary), choices: a.choices } : null;
   }
 
   async page(): Promise<{ url: string; title: string }> {
@@ -262,7 +283,7 @@ export class Session {
   /** Answer to a brain approval request from a UI control. */
   approve(choice: ApprovalChoice): Promise<CommandResult> {
     return this.enqueue(async () => {
-      const pending = this.pending?.kind === "approval" ? this.pending : null;
+      const pending = this.approval;
       const step = this.ack(choice === "deny" ? "no" : `yes (${choice})`);
       if (!pending || !this.deps.brain) return this.finish([step]);
       await this.resolveApproval(step, pending, choice);
@@ -270,8 +291,8 @@ export class Session {
     });
   }
 
-  private async resolveApproval(step: StepResult, pending: Extract<NonNullable<Pending>, { kind: "approval" }>, choice: ApprovalChoice): Promise<void> {
-    this.pending = null;
+  private async resolveApproval(step: StepResult, pending: ApprovalPending, choice: ApprovalChoice): Promise<void> {
+    if (this.approval === pending) this.approval = null;
     try {
       await this.deps.brain!.approve(pending.runId, choice, pending.requestId);
       step.result = choice === "deny" ? this.report(`Denied: ${pending.summary}`, "warn") : this.report(`Allowed: ${pending.summary}`, "ok");
@@ -329,16 +350,22 @@ export class Session {
     this.report("Stopped", "ok");
   }
 
+  private stopping = new Set<string>();
+  /** Ask the brain to stop its run (once per run); the run's own cancelled event clears state. */
   private stopBrain(): void {
     const run = this.brain;
-    if (!run || !this.deps.brain) return;
-    this.deps.brain.stop(run.id).catch((err) => this.report(`Couldn't stop Hermes: ${errMsg(err)}`, "warn"));
+    if (!run || !this.deps.brain || this.stopping.has(run.id)) return;
+    this.stopping.add(run.id);
+    this.approval = null;
+    this.deps.brain.stop(run.id).catch((err) => this.report(`Couldn't stop ${this.deps.brain?.name ?? "the brain"}: ${errMsg(err)}`, "warn"));
   }
 
   private async finish(steps: StepResult[], stoppedAt?: number): Promise<CommandResult> {
-    const pending = this.pendingSummary();
-    const ok = pending === null && steps.length > 0 && stoppedAt === undefined && steps.every((s) => s.result?.level === "ok" && !s.verify?.stuck);
-    const result: CommandResult = { ok, steps, page: await this.page(), pending };
+    const local = this.localPendingSummary();
+    // a parked brain approval does not make this command incomplete, but it is the question
+    // the caller should hear next
+    const ok = local === null && steps.length > 0 && stoppedAt === undefined && steps.every((s) => s.result?.level === "ok" && !s.verify?.stuck);
+    const result: CommandResult = { ok, steps, page: await this.page(), pending: local ?? this.approvalSummary() };
     if (stoppedAt !== undefined) result.stoppedAt = stoppedAt;
     return result;
   }
@@ -409,9 +436,12 @@ export class Session {
     const trimmed = text.trim();
     if (!trimmed) return this.finish([]);
 
-    if (this.pending?.kind === "approval" && this.brainFor) {
+    // "stop" always wins: it halts the brain run outright rather than answering a question
+    if (isStopWord(trimmed)) this.stopBrain();
+
+    if (this.approval && !this.pending && this.brainFor && !isStopWord(trimmed)) {
       // a yes/no answers the agent; anything else is a new command and the request stays open
-      const pending = this.pending;
+      const pending = this.approval;
       const reply = await this.decider.classifyReply(trimmed, pending.summary);
       if (reply === "confirm" || reply === "cancel") {
         const step = this.ack(trimmed);
@@ -601,6 +631,7 @@ export class Session {
       try {
         await brain.steer(this.brain.id, text);
         if (voice) this.say("Okay.");
+        step.lane = "brain";
         step.result = this.report(`Told ${brain.name}: ${text}`, "ok");
       } catch (err) {
         step.result = this.report(`Couldn't reach ${brain.name}: ${errMsg(err)}`, "error");
@@ -621,6 +652,7 @@ export class Session {
     const state: BrainState = { id: run.id, stepId: step.stepId, voice, done, resolve };
     this.brain = state;
     void this.consumeBrain(run, state);
+    step.lane = "brain";
     step.result = this.report(`${brain.name} is on it`, "ok");
     return step;
   }
@@ -642,11 +674,12 @@ export class Session {
             this.report(`${name}: ${event.tool}…`, "busy");
             break;
           case "approval":
-            this.pending = { kind: "approval", runId: run.id, requestId: event.requestId, summary: event.summary, choices: event.choices };
-            if (state.voice) this.say(clipSpoken(Session.approvalQuestion(event.summary)));
+            this.approval = { runId: run.id, requestId: event.requestId, summary: event.summary, choices: event.choices };
+            // spoken now unless the browser is mid-question; then it is read out with that answer's outcome
+            if (state.voice && !this.pending) this.say(clipSpoken(Session.approvalQuestion(event.summary)));
             break;
           case "approved":
-            if (this.pending?.kind === "approval" && this.pending.runId === run.id) this.pending = null;
+            if (this.approval?.runId === run.id) this.approval = null;
             break;
           case "completed":
             settle({ ok: true, output: event.output });
@@ -663,10 +696,13 @@ export class Session {
       }
     } catch (err) {
       this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event: { kind: "failed", error: errMsg(err) } });
+      settle({ ok: false, output: errMsg(err) });
+      if (state.voice) this.say(clipSpoken(`${name} dropped out: ${errMsg(err)}`));
     } finally {
       if (!settled) settle({ ok: false, output: "The run ended without an answer" });
-      if (this.pending?.kind === "approval" && this.pending.runId === run.id) this.pending = null;
+      if (this.approval?.runId === run.id) this.approval = null;
       if (this.brain === state) this.brain = null;
+      this.stopping.delete(run.id);
     }
   }
 }
