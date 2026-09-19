@@ -27,6 +27,8 @@ export type VerifyState = {
   title_changed: boolean;
   new_elements: string[];
   gone_elements: string[];
+  /** Dialogs the action popped, e.g. 'alert: Pro selected'. */
+  dialogs: string[];
   error: string | null;
 };
 
@@ -121,6 +123,7 @@ export function buildVerifyState(i: VerifyInput): VerifyState {
     title_changed: i.before.title !== i.after.title,
     new_elements: fresh.slice(0, MAX_NEW).map(describeElement),
     gone_elements: gone.slice(0, MAX_GONE).map(describeElement),
+    dialogs: i.after.dialogs ?? [],
     error: i.error,
   };
 }
@@ -154,17 +157,20 @@ export function quickVerdict(s: VerifyState, a: Action): VerifyResult | null {
     case "none":
       return verdict(true, false, "none", "code");
     case "type":
-      return a.submit ? null : verdict(true, false, "none", "code"); // fill() throws when it can't
+      if (!a.submit || s.dialogs.length > 0) return verdict(true, false, "none", "code"); // fill() throws when it can't
+      return null;
     case "click":
     case "click_at":
     case "press":
-      return null; // blockers appear without URL changes; URL changes can land on walls
+      // a dialog is a visible effect the DOM can't show; otherwise blockers appear without URL
+      // changes and URL changes can land on walls, so ask
+      return s.dialogs.length > 0 ? verdict(true, false, "none", "code") : null;
   }
 }
 
 /** Without Jev: any change counts as progress, no change as stuck. */
 export function heuristicVerdict(s: VerifyState): VerifyResult {
-  const changed = s.url_changed || s.title_changed || s.new_elements.length > 0;
+  const changed = s.url_changed || s.title_changed || s.new_elements.length > 0 || s.dialogs.length > 0;
   return verdict(changed, !changed, changed ? "none" : "no_change", "heuristic");
 }
 

@@ -12,8 +12,8 @@ import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepRes
 import { type VerifyResult, describeVerify } from "./verify.js";
 
 export type Pending =
-  | { kind: "confirm"; action: Action; label: string; reason: string }
-  | { kind: "clarify"; decision: Decision }
+  | { kind: "confirm"; action: Action; label: string; reason: string; before: PageSnapshot; command: string }
+  | { kind: "clarify"; decision: Decision; before: PageSnapshot; command: string }
   | null;
 
 /** The rest of a multi-step utterance, parked while a confirm/clarify question is open. */
@@ -138,8 +138,7 @@ export class Session {
         step.result = this.report(`Cancelled: ${pending.label}`, "warn");
         return this.finish([step], true);
       }
-      const outcome = await this.runAction(pending.action);
-      step.result = { text: outcome.text, level: outcome.level };
+      await this.runHeld(step, pending.action, pending.before, rest !== null);
       return this.resume([step], rest);
     });
   }
@@ -147,13 +146,13 @@ export class Session {
   /** A clarification option chosen from a UI control. */
   pick(elementId: string): Promise<CommandResult> {
     return this.enqueue(async () => {
-      const opt = this.pending?.kind === "clarify" ? this.pending.decision.clarify?.options.find((o) => o.elementId === elementId) : undefined;
+      const pending = this.pending?.kind === "clarify" ? this.pending : null;
+      const opt = pending?.decision.clarify?.options.find((o) => o.elementId === elementId);
       const rest = this.takeContinuation();
       this.pending = null;
       const step: StepResult = { command: `pick ${elementId}`, decision: null, result: null };
-      if (!opt) return this.finish([step], false);
-      const outcome = await this.runAction({ kind: "click", elementId: opt.elementId, label: opt.label });
-      step.result = { text: outcome.text, level: outcome.level };
+      if (!pending || !opt) return this.finish([step], false);
+      await this.runHeld(step, { kind: "click", elementId: opt.elementId, label: opt.label }, pending.before, rest !== null);
       return this.resume([step], rest);
     });
   }
@@ -235,8 +234,17 @@ export class Session {
   /** After a held action ran, carry on with the steps parked behind the question. */
   private async resume(steps: StepResult[], rest: Continuation | null): Promise<CommandResult> {
     const last = steps[steps.length - 1];
-    if (last?.result?.level === "error" || !rest) return this.finish(steps, last?.result?.level !== "error");
+    const failed = last?.result?.level === "error" || !!last?.verify?.stuck;
+    if (failed || !rest) return this.finish(steps, !failed);
     return this.runSteps(rest.original, rest.commands, rest.index + 1, steps);
+  }
+
+  /** Run an action that was waiting on a question, then check it like any other step. */
+  private async runHeld(step: StepResult, action: Action, before: PageSnapshot, blocking: boolean): Promise<void> {
+    const outcome = await this.runAction(action);
+    step.result = { text: outcome.text, level: outcome.level };
+    if (blocking) await this.verifyStep(step, action, before, outcome.error);
+    else void this.verifyStep(step, action, before, outcome.error);
   }
 
   private async handleCommand(text: string): Promise<CommandResult> {
@@ -255,15 +263,15 @@ export class Session {
           step.result = this.report(`Cancelled: ${pending.label}`, "warn");
           return this.finish([step], true);
         }
-        const outcome = await this.runAction(pending.action);
-        step.result = { text: outcome.text, level: outcome.level };
+        await this.runHeld(step, pending.action, pending.before, rest !== null);
         return this.resume([step], rest);
       }
       this.pending = null; // a new command supersedes the question and whatever was queued behind it
       this.continuation = null;
     }
     if (this.pending?.kind === "clarify") {
-      const opts = this.pending.decision.clarify?.options ?? [];
+      const pending = this.pending;
+      const opts = pending.decision.clarify?.options ?? [];
       const idx = parseOrdinal(trimmed);
       const picked = idx !== null ? opts[idx] : undefined;
       const rest = this.takeContinuation();
@@ -271,8 +279,7 @@ export class Session {
       if (picked) {
         this.emit({ type: "transcript_ack", text: trimmed });
         const step: StepResult = { command: trimmed, decision: null, result: null };
-        const outcome = await this.runAction({ kind: "click", elementId: picked.elementId, label: picked.label });
-        step.result = { text: outcome.text, level: outcome.level };
+        await this.runHeld(step, { kind: "click", elementId: picked.elementId, label: picked.label }, pending.before, rest !== null);
         return this.resume([step], rest);
       }
     }
@@ -330,7 +337,7 @@ export class Session {
     if (decision.meta.fallbackReason) this.report(`Jev unavailable (${decision.meta.fallbackReason}); used heuristics`, "warn");
 
     if (decision.clarify) {
-      this.pending = { kind: "clarify", decision };
+      this.pending = { kind: "clarify", decision, before: snapshot, command };
       this.emit({ type: "clarify", question: decision.clarify.question, options: decision.clarify.options });
       return step;
     }
@@ -347,7 +354,7 @@ export class Session {
     if (decision.needsConfirmation) {
       const label = describeAction(decision.action);
       const reason = `This looks hard to undo (risk ${Math.round(decision.riskProbability * 100)}%). Say "yes" or "no".`;
-      this.pending = { kind: "confirm", action: decision.action, label, reason };
+      this.pending = { kind: "confirm", action: decision.action, label, reason, before: snapshot, command };
       this.emit({ type: "confirm", actionLabel: label, reason });
       return step;
     }

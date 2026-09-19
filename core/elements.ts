@@ -19,6 +19,9 @@ export interface PageSnapshot {
   url: string;
   title: string;
   elements: PageElement[];
+  /** JavaScript dialogs (alert/confirm/prompt) shown since the previous snapshot, as
+   *  "alert: message". They never appear in the DOM, so this is the only evidence of them. */
+  dialogs?: string[];
 }
 
 /** Jev's Choice accepts 255 options; keep room for the "none" escape hatch and keep the

@@ -30,6 +30,10 @@ export class PlaywrightExecutor implements Executor {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private changeListeners = new Set<() => void>();
+  /** Dialogs seen since the last snapshot; drained by snapshot(). */
+  private dialogs: string[] = [];
+  private readonly adopted = new WeakSet<Page>();
+  private closing = false;
 
   constructor(readonly options: PlaywrightOptions, id = "playwright") {
     this.id = id;
@@ -69,16 +73,26 @@ export class PlaywrightExecutor implements Executor {
 
   private adopt(p: Page): void {
     this.page = p;
+    // the context's "page" event also fires for pages we created ourselves
+    if (this.adopted.has(p)) return;
+    this.adopted.add(p);
     const notify = () => this.emitChange();
     p.on("load", notify);
     p.on("domcontentloaded", notify);
     p.on("framenavigated", (f) => f === p.mainFrame() && notify());
+    // Alerts vanish without a trace in the DOM; record them so verification can see the effect.
+    // Accept alerts and beforeunload; cancel confirm/prompt, the safe default for "are you sure?".
+    p.on("dialog", (d) => {
+      this.dialogs.push(`${d.type()}: ${d.message()}`);
+      void (d.type() === "alert" || d.type() === "beforeunload" ? d.accept() : d.dismiss()).catch(() => {});
+      notify();
+    });
     p.on("close", () => {
-      if (this.page !== p) return;
+      if (this.page !== p || this.closing) return;
       const rest = this.context?.pages().filter((x) => !x.isClosed()) ?? [];
       const next = rest[rest.length - 1];
       if (next) this.page = next;
-      else void this.context?.newPage().then((np) => this.adopt(np));
+      else void this.context?.newPage().then((np) => this.adopt(np)).catch(() => {});
       this.emitChange();
     });
     notify();
@@ -141,7 +155,17 @@ export class PlaywrightExecutor implements Executor {
       // usually a navigation mid-evaluate; log so a broken script is never silent
       console.warn("element extraction failed:", err instanceof Error ? err.message.split("\n")[0] : err);
     }
-    return { url: page.url(), title: await this.title(), elements };
+    const snapshot: PageSnapshot = { url: page.url(), title: await this.title(), elements };
+    if (this.dialogs.length > 0) {
+      snapshot.dialogs = this.dialogs;
+      this.dialogs = [];
+    }
+    return snapshot;
+  }
+
+  /** Suffix for a status line when the action popped a dialog. */
+  private dialogNote(): string {
+    return this.dialogs.length ? ` — ${this.dialogs.map((d) => d.replace(/^(\w+): (.*)$/, '$1 "$2"')).join(", ")}` : "";
   }
 
   async screenshot(): Promise<Buffer | null> {
@@ -187,12 +211,12 @@ export class PlaywrightExecutor implements Executor {
         await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
         await loc.click({ timeout: 5000 });
         await this.settle();
-        return `Clicked ${action.label}`;
+        return `Clicked ${action.label}${this.dialogNote()}`;
       }
       case "click_at":
         await page.mouse.click(action.x, action.y);
         await this.settle();
-        return `Clicked at (${action.x}, ${action.y})`;
+        return `Clicked at (${action.x}, ${action.y})${this.dialogNote()}`;
       case "type": {
         const loc = action.elementId
           ? this.locate(action.elementId)
@@ -215,12 +239,12 @@ export class PlaywrightExecutor implements Executor {
           await page.keyboard.press("Enter");
           await this.settle();
         }
-        return `Typed "${action.text}"${action.submit ? " and pressed Enter" : ""}`;
+        return `Typed "${action.text}"${action.submit ? " and pressed Enter" : ""}${this.dialogNote()}`;
       }
       case "press":
         await page.keyboard.press(action.key);
         await this.settle();
-        return `Pressed ${action.key}`;
+        return `Pressed ${action.key}${this.dialogNote()}`;
       case "scroll": {
         const h = this.options.viewport.height;
         await page.evaluate(
@@ -251,6 +275,7 @@ export class PlaywrightExecutor implements Executor {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     await this.browser?.close().catch(() => {});
     this.browser = this.context = this.page = null;
   }

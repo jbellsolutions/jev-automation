@@ -12,18 +12,22 @@ export class FakeExecutor implements Executor {
   readonly capabilities: ExecutorCapabilities = { screenshot: false, viewport: true, clickAt: true };
   viewport = { width: 1280, height: 800 };
   url = "https://example.test/";
+  titleText = "Example";
+  /** Realistic default: clicking something changes the page. Turn off to simulate a dead click. */
+  clickChangesPage = true;
   snapshots = 0;
   executed: Action[] = [];
   failNext: string | null = null;
   constructor(public elements: PageElement[] = [], readonly id = "fake") {}
   async start() {}
-  async title() { return "Example"; }
-  async snapshot(): Promise<PageSnapshot> { this.snapshots++; return { url: this.url, title: "Example", elements: this.elements }; }
+  async title() { return this.titleText; }
+  async snapshot(): Promise<PageSnapshot> { this.snapshots++; return { url: this.url, title: this.titleText, elements: this.elements }; }
   async screenshot() { return null; }
   async execute(action: Action): Promise<string> {
     if (this.failNext) { const m = this.failNext; this.failNext = null; throw new Error(m); }
     this.executed.push(action);
     if (action.kind === "navigate") this.url = action.url;
+    if (action.kind === "click" && this.clickChangesPage) this.titleText = `After ${action.label}`;
     return `did ${action.kind}`;
   }
   async setViewport(w: number, h: number) { if (w === this.viewport.width) return false; this.viewport = { width: w, height: h }; return true; }

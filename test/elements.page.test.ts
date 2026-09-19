@@ -1,6 +1,6 @@
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { describeElement, extractElements } from "../core/elements.js";
+import { type PageSnapshot, describeElement, extractElements } from "../core/elements.js";
 
 /** Runs the real in-page script in headless Chromium against small HTML fixtures. */
 let browser: Browser;
@@ -55,4 +55,25 @@ describe("PAGE_SCRIPT in a real DOM", () => {
     expect(search.placeholder).toBe("Search the site");
     expect(els.find((e) => e.tag === "button")?.text).toBe("Go");
   }, 15000);
+});
+
+describe("PlaywrightExecutor dialogs", () => {
+  it("records alerts so verification can see them, and accepts them", async () => {
+    const { PlaywrightExecutor } = await import("../server/executors/playwright.js");
+    const ex = new PlaywrightExecutor({ headless: true, startUrl: "about:blank", viewport: { width: 800, height: 600 }, deviceScaleFactor: 1, jpegQuality: 50 });
+    await ex.start();
+    try {
+      // reach the private page through execute(): navigate to a data: URL with a button that alerts
+      await ex.execute({ kind: "navigate", url: `data:text/html,<button onclick="alert('Pro selected')">Choose Pro</button>` });
+      const before = await ex.snapshot();
+      expect(before.dialogs).toBeUndefined();
+      const status = await ex.execute({ kind: "click", elementId: "e0", label: 'button "Choose Pro"' });
+      expect(status).toBe('Clicked button "Choose Pro" — alert "Pro selected"');
+      const after = await ex.snapshot();
+      expect(after.dialogs).toEqual(["alert: Pro selected"]);
+      expect((await ex.snapshot()).dialogs).toBeUndefined(); // drained
+    } finally {
+      await ex.close();
+    }
+  }, 30000);
 });

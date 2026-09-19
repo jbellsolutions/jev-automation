@@ -282,7 +282,7 @@ describe("Session: multi-step utterances", () => {
 describe("Session: verification in sequences", () => {
   it("stops the sequence when a step is stuck, naming the blocker", async () => {
     const { session, executor, messages } = make([el("e0", { tag: "button", text: "Next" })]);
-    // the fake page never changes, so clicking "Next" produces no diff → heuristic says stuck
+    executor.clickChangesPage = false; // a dead click: no diff → heuristic says stuck
     const r = await session.command("click next and scroll down");
     expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
     expect(r.ok).toBe(false);
@@ -293,6 +293,7 @@ describe("Session: verification in sequences", () => {
 
   it("a single stuck command is reported but not treated as a sequence failure", async () => {
     const { session, executor } = make([el("e0", { tag: "button", text: "Next" })]);
+    executor.clickChangesPage = false;
     const r = await session.command("click next");
     expect(executor.executed).toHaveLength(1);
     expect(r.ok).toBe(true);
@@ -305,5 +306,25 @@ describe("Session: verification in sequences", () => {
     const r = await session.command("open a.com and scroll down");
     expect(executor.snapshots).toBe(2);
     expect(r.steps.every((s) => s.verify === undefined)).toBe(true);
+  });
+});
+
+describe("Session: held actions are verified too", () => {
+  it("a resumed sequence stops when the confirmed click turns out to be stuck", async () => {
+    const { session, executor } = make([el("e0", { tag: "button", text: "Delete account" })]);
+    executor.clickChangesPage = false;
+    await session.command("click delete account and scroll down");
+    const r = await session.command("yes");
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
+    expect(r.ok).toBe(false);
+    expect(r.steps[0]!.verify).toMatchObject({ stuck: true });
+  });
+
+  it("a confirmed click that changes the page continues the sequence", async () => {
+    const { session, executor } = make([el("e0", { tag: "button", text: "Delete account" })]);
+    await session.command("click delete account and scroll down");
+    const r = await session.reply(true);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["click", "scroll"]);
+    expect(r.steps[0]!.verify).toMatchObject({ done: true });
   });
 });

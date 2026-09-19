@@ -109,3 +109,15 @@ describe("Jev verification", () => {
     expect(heuristicVerdict(buildVerifyState({ command: "c", expectation: null, action: click, before: page("https://a.test/"), after: page("https://a.test/", [], "Other"), error: null })).done).toBe(true);
   });
 });
+
+describe("dialogs", () => {
+  it("count as a visible effect for clicks and typing", () => {
+    const before = page("https://a.test/");
+    const after: PageSnapshot = { ...page("https://a.test/"), dialogs: ["alert: Pro selected"] };
+    const s = buildVerifyState({ command: "click choose pro", expectation: null, action: click, before, after, error: null });
+    expect(s.dialogs).toEqual(["alert: Pro selected"]);
+    expect(quickVerdict(s, click)).toMatchObject({ done: true, source: "code" });
+    expect(quickVerdict(s, { kind: "type", elementId: null, label: null, text: "x", submit: true })).toMatchObject({ done: true });
+    expect(heuristicVerdict(s).done).toBe(true);
+  });
+});
