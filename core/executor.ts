@@ -27,6 +27,8 @@ export interface Executor {
   readonly viewport: { width: number; height: number };
   /** Current location: a URL for browsers, app://<bundle id> for desktop apps. */
   readonly url: string;
+  /** False while the surface cannot be driven (a bridge that is not connected); absent = ready. */
+  readonly ready?: boolean;
   start(): Promise<void>;
   title(): Promise<string>;
   snapshot(): Promise<PageSnapshot>;

@@ -189,7 +189,11 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
         const lines = [
           `Jev: ${health.jev.enabled ? `enabled (${health.jev.model})` : "disabled — keyword heuristics"}`,
           `Default session: ${sessions.default ?? "none"}`,
-          ...sessions.sessions.map((s) => `- ${s.id} (${s.kind}) ${s.busy ? "busy" : "idle"}${s.pending ? ` · waiting for the user: ${s.pending.kind}` : ""} · ${s.title ? `${s.title} — ` : ""}${s.url}`),
+          ...sessions.sessions.map((s) =>
+            s.ready === false
+              ? `- ${s.id} (${s.kind}) not connected${s.kind === "chrome" ? " — the user's Chrome needs the Jev bridge extension running" : ""}`
+              : `- ${s.id} (${s.kind}) ${s.busy ? "busy" : "idle"}${s.pending ? ` · waiting for the user: ${s.pending.kind}` : ""} · ${s.title ? `${s.title} — ` : ""}${s.url}`,
+          ),
         ];
         return ok(lines.join("\n"), { ...health, ...sessions });
       } catch (err) {

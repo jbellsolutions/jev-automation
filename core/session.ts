@@ -197,7 +197,7 @@ export class Session {
 
   async status(): Promise<SessionStatus> {
     const page = await this.page();
-    return { id: this.id, kind: this.executor.kind, ...page, busy: this.busy, pending: this.pendingSummary(), capabilities: this.executor.capabilities };
+    return { id: this.id, kind: this.executor.kind, ...page, busy: this.busy, pending: this.pendingSummary(), capabilities: this.executor.capabilities, ready: this.executor.ready !== false };
   }
 
   /** A spoken or typed command. Resolves when the command has been acted on or has left a
@@ -542,7 +542,7 @@ export class Session {
     for (let i = from; i < total; i++) {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
-      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async", undefined, total === 1 ? original : undefined);
+      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async", undefined, total === 1 ? original : undefined, total > 1);
       steps.push(step);
       if (step.verify?.stuck) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");
@@ -567,7 +567,7 @@ export class Session {
 
   /** Decide a command against a fresh snapshot. Returns null on failure, which is reported on
    *  `step` when there is one. */
-  private async decide(command: string, step: StepResult | null): Promise<Decision | null> {
+  private async decide(command: string, step: StepResult | null, pinBrowser = false): Promise<Decision | null> {
     if (step) this.report("Thinking…", "busy");
     this.inFlight?.abort();
     const controller = (this.inFlight = new AbortController());
@@ -580,6 +580,9 @@ export class Session {
       if (step) step.result = outcome;
       return null;
     }
+    // a step of an utterance already routed to the browser stays there: "search for cats" on
+    // its own may read as a question, but here it is the second half of a page sequence
+    if (pinBrowser && (decision.route === "hermes" || decision.route === "unclear") && decision.action.kind !== "none") decision.route = "browser_now";
     if (step) this.announce(step, decision);
     return decision;
   }
@@ -592,9 +595,9 @@ export class Session {
   }
 
   /** One command: decide (unless already decided), gate, execute, check. May leave `pending` set. */
-  private async runStep(step: StepResult, verifyMode: "blocking" | "async", decided?: Decision, raw?: string): Promise<StepResult> {
+  private async runStep(step: StepResult, verifyMode: "blocking" | "async", decided?: Decision, raw?: string, pinBrowser = false): Promise<StepResult> {
     const command = step.command;
-    const decision = decided ?? (await this.decide(command, step));
+    const decision = decided ?? (await this.decide(command, step, pinBrowser));
     if (!decision) return step;
     const snapshot = this.lastSnapshot!;
     // the brain gets what was actually said (case, names), not the normalised browser form

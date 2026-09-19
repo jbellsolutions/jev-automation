@@ -12,7 +12,7 @@
     "build": "vite build",
     "start": "npm run build && tsx server/index.ts",
     "serve": "tsx server/index.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p client",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client && tsc --noEmit -p extension",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build",
@@ -20,6 +20,8 @@
     "stt:smoke": "tsx scripts/stt-smoke.ts",
     "build:app": "node scripts/build-app.mjs",
     "voice:test": "node --import tsx scripts/voice-test.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
+    "bridge:smoke": "node --import tsx scripts/bridge-smoke.mjs",
     "app": "npm run build && npm run build:app && electron .",
     "app:run": "electron .",
     "app:fake": "npm run build && npm run build:app && JEV_AUTOLISTEN=1 electron . --remote-debugging-port=9223 --no-sandbox --use-fake-ui-for-media-stream --use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${JEV_FAKE_WAV:-scratch/cats.wav}%noloop"
@@ -35,6 +37,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/chrome": "^0.3.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",

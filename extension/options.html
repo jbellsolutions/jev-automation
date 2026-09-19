@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Jev bridge</title>
+    <style>
+      body { font: 14px -apple-system, system-ui, sans-serif; margin: 24px; max-width: 520px; color: #222; }
+      label { display: block; margin: 14px 0 4px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; border: 1px solid #bbb; border-radius: 6px; }
+      button { margin-top: 16px; padding: 8px 16px; font: inherit; border-radius: 6px; border: 1px solid #1a7f37; background: #1a7f37; color: #fff; cursor: pointer; }
+      p.hint { color: #666; margin: 6px 0 0; }
+      #status { margin-left: 12px; color: #1a7f37; }
+    </style>
+  </head>
+  <body>
+    <h2>Jev bridge</h2>
+    <p>Lets the Jev companion on this Mac drive the tab you are looking at. Loopback only.</p>
+    <label for="url">Companion socket</label>
+    <input id="url" placeholder="ws://127.0.0.1:3111/ws/bridge" />
+    <p class="hint">3111 is the desktop app; 3000 the dev server.</p>
+    <label for="token">Token (JEV_TOKEN from the companion's .env)</label>
+    <input id="token" type="password" autocomplete="off" />
+    <button id="save">Save</button><span id="status"></span>
+    <script src="options.js"></script>
+  </body>
+</html>

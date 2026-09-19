@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Jev bridge",
+  "version": "0.1.0",
+  "description": "Lets the Jev voice assistant on this Mac act on the tab you are looking at.",
+  "permissions": ["tabs", "scripting", "storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*", "file://*/*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "options_ui": { "page": "options.html", "open_in_tab": false },
+  "action": { "default_title": "Jev bridge — options" },
+  "icons": {}
+}

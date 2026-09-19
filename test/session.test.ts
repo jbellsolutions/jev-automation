@@ -455,6 +455,23 @@ describe("Session: brain lane (Hermes)", () => {
     expect(local.output).toBe("did scroll");
   });
 
+  it("steps of an utterance routed to the browser stay in the browser, even when one reads like a question", async () => {
+    const { brain, executor } = withBrain();
+    // Jev may call "search for cats" on its own a question for the brain; inside a page sequence it is a search
+    const decider = new HeuristicDecider();
+    const decide = decider.decide.bind(decider);
+    decider.decide = async (...args) => {
+      const d = await decide(...args);
+      if (d.command === "search for cats") Object.assign(d, { route: "hermes", routeConfidence: 0.98 });
+      return d;
+    };
+    const session = new Session("fake3", { executor, decider, brain });
+    const r = await session.command("open wikipedia and search for cats");
+    expect(brain.sent).toEqual([]);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["navigate", "search"]);
+    expect(r.steps.map((s) => s.decision?.route)).toEqual(["browser_now", "browser_now"]);
+  });
+
   it("greetings and half-heard fragments go to the brain too: no dead ends", async () => {
     const { session, brain, executor } = withBrain();
     const r = await session.command("yo can you hear me");

@@ -6,6 +6,7 @@ import { createDecider } from "../core/decide.js";
 import { createCompanion } from "./companion.js";
 import { selectComputer } from "./computer.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
+import { RemoteExecutor } from "./executors/remote.js";
 import { createBrain } from "./hermes.js";
 import { describeSpeaker, selectSpeaker } from "./speak/select.js";
 import { selectSttProvider } from "./stt/select.js";
@@ -23,6 +24,12 @@ const stt = selectSttProvider();
 const speaker = selectSpeaker();
 const brain = createBrain();
 const computer = selectComputer();
+const bridge = new RemoteExecutor({
+  onReady: (ready) => {
+    console.log(ready ? "Chrome: bridge connected — acting in your Chrome" : "Chrome: bridge disconnected — back to the built-in browser");
+    companion.hub.followDefault();
+  },
+});
 const companion = createCompanion({
   decider,
   token: process.env.JEV_TOKEN,
@@ -32,6 +39,7 @@ const companion = createCompanion({
   speaker,
   brain,
   computer,
+  bridge,
 });
 const playwright = new PlaywrightExecutor({
   headless: HEADLESS,
@@ -46,13 +54,15 @@ const playwright = new PlaywrightExecutor({
 
 async function main(): Promise<void> {
   const port = await companion.listen(PORT);
+  companion.register(bridge);
   companion.register(playwright);
   await playwright.start();
   console.log(`Jev voice browser → http://localhost:${port}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
   console.log(stt ? `Voice in: streaming via ${stt.name}` : "Voice in: browser Web Speech (set DEEPGRAM_API_KEY or run npm run build:native for streaming transcription)");
-  console.log(speaker ? "Voice out: macOS say" : "Voice out: off");
+  console.log(`Voice out: ${describeSpeaker(speaker)}`);
+  console.log("Chrome: waiting for the bridge extension (load dist/extension unpacked; token = JEV_TOKEN)");
   if (brain) {
     const h = await brain.health();
     console.log(h.ok ? `Brain: Hermes (${h.detail}) at ${process.env.HERMES_API_URL ?? "http://127.0.0.1:8642"}` : `Brain: Hermes configured but not reachable — ${h.detail}`);

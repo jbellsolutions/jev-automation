@@ -121,12 +121,21 @@ export class Hub {
     return this.entries.get(id)?.session;
   }
 
-  /** Explicit default, else the user's Chrome when the bridge is connected, else Playwright, else anything. */
+  /** Explicit default, else the user's Chrome when the bridge is connected, else Playwright, else anything ready. */
   get defaultId(): string | null {
     const d = this.opts.defaultSession;
     if (d && this.entries.has(d)) return d;
-    for (const id of ["chrome", "playwright"]) if (this.entries.has(id)) return id;
-    return this.entries.keys().next().value ?? null;
+    const ready = (id: string) => this.entries.get(id)?.session.executor.ready !== false;
+    for (const id of ["chrome", "playwright"]) if (this.entries.has(id) && ready(id)) return id;
+    return [...this.entries.keys()].find(ready) ?? this.entries.keys().next().value ?? null;
+  }
+
+  /** The preferred surface changed (the Chrome bridge came or went): every UI follows it and
+   *  gets a fresh hello for the new session. */
+  followDefault(): void {
+    const target = this.defaultId;
+    if (!target) return;
+    for (const [ws, id] of [...this.owner]) if (id !== target) this.attach(ws, target);
   }
 
   sessionFor(ws: WebSocket): Session | undefined {

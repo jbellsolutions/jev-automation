@@ -71,6 +71,28 @@ real Chromium window.
 Microphone access needs a secure context: `http://localhost` or `https://`. Only *final*
 transcripts are sent to the server; interim text is displayed but never acted on.
 
+### Act in your own Chrome (the bridge extension)
+
+By default commands run in a Playwright Chromium that is signed in to nothing. Load the bridge
+extension and the same commands act on the tab you are looking at in your own Chrome — Slack,
+Gmail, everything you are already logged in to. Hermes reaches it the same way through
+`jev_browse`.
+
+```bash
+npm run build:extension               # → dist/extension
+```
+
+Then once, in Chrome: `chrome://extensions` → turn on **Developer mode** (top right) → **Load
+unpacked** → pick `dist/extension`. Click the extension's **Details → Extension options** and
+paste the companion socket (`ws://127.0.0.1:3111/ws/bridge` for the desktop app, `:3000` for
+`npm start`) and your `JEV_TOKEN` from `.env`. The toolbar badge shows **on** while it is
+connected; the companion logs `chrome: bridge connected` and every UI switches to the `chrome`
+surface (and back to Playwright if the bridge drops). `chrome://` and the Web Store pages are
+off limits to extensions, so switch to a normal tab first.
+
+`npm run bridge:smoke -- "open wikipedia and search for cats"` proves the whole path in a
+throwaway Chromium without touching your profile.
+
 ## Project layout
 
 ```
@@ -89,6 +111,8 @@ client/                      React 19 + Vite + TypeScript
   src/hooks/useSocket.ts     typed WebSocket with auto-reconnect
   src/hooks/useSpeechRecognition.ts   Web Speech API: continuous listening, interim vs final results
   src/components/            LiveView, MicButton, CommandInput, ConfirmCard, ClarifyCard, DecisionLog, TopBar, Help
+extension/                   Chrome bridge (MV3): background.ts socket + tab tracking, content.ts + dom-actions.ts in the page
+scripts/build-extension.mjs  bundles it into dist/extension, inlining core/page-script.ts as real code (no eval)
 test/                        vitest unit tests for the server logic (Jev client tested with a mocked fetch)
 ```
 

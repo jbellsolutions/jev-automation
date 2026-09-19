@@ -12,7 +12,8 @@ import type { Executor } from "../core/executor.js";
 import type { Speaker } from "../core/speak.js";
 import type { ClientMessage } from "../core/protocol.js";
 import type { Computer } from "../core/session.js";
-import { type Auth, allowedOrigins, createAuth, socketAllowed } from "./auth.js";
+import { type Auth, allowedOrigins, createAuth, socketAllowed, tokenPresented } from "./auth.js";
+import type { RemoteExecutor } from "./executors/remote.js";
 import { demoPage } from "./demo.js";
 import { createApi } from "./http.js";
 import { Hub } from "./hub.js";
@@ -36,6 +37,8 @@ export interface CompanionOptions {
   brain?: Brain | null;
   /** The Mac lane (open apps); without one "open slack" goes to the brain or is refused. */
   computer?: Computer | null;
+  /** The user's Chrome, reached through the bridge extension on /ws/bridge. */
+  bridge?: RemoteExecutor | null;
 }
 
 export interface Companion {
@@ -75,7 +78,16 @@ export function createCompanion(opts: CompanionOptions): Companion {
 
   const wss = new WebSocketServer({ noServer: true });
   const sttWss = new WebSocketServer({ noServer: true });
+  const bridgeWss = new WebSocketServer({ noServer: true });
   let origins = allowedOrigins(0, opts.extraOrigins);
+
+  // the bridge drives the user's browser: it always presents the token (the extension's
+  // origin alone is not enough), and UIs follow Chrome while it is connected
+  bridgeWss.on("connection", (ws: WebSocket) => {
+    const bridge = opts.bridge;
+    if (!bridge) return ws.close(1013, "no Chrome bridge configured");
+    bridge.attach(ws);
+  });
 
   sttWss.on("connection", (ws: WebSocket) => {
     if (!opts.stt) return ws.close(1013, "no speech-to-text provider configured");
@@ -132,9 +144,10 @@ export function createCompanion(opts: CompanionOptions): Companion {
     const server = http.createServer(app);
     server.on("upgrade", (req, socket, head) => {
       const pathname = req.url?.split("?")[0];
-      const target = pathname === "/ws" ? wss : pathname === "/ws/stt" ? sttWss : null;
+      const target = pathname === "/ws" ? wss : pathname === "/ws/stt" ? sttWss : pathname === "/ws/bridge" ? bridgeWss : null;
       if (!target) return socket.destroy();
-      if (!socketAllowed(req, auth, origins)) {
+      const allowed = target === bridgeWss ? tokenPresented(req, auth) : socketAllowed(req, auth, origins);
+      if (!allowed) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         return socket.destroy();
       }
@@ -175,6 +188,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
     async close() {
       for (const ws of wss.clients) ws.terminate();
       for (const ws of sttWss.clients) ws.terminate();
+      for (const ws of bridgeWss.clients) ws.terminate();
       await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
       await hub.close();
     },

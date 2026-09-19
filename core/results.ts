@@ -47,4 +47,6 @@ export interface SessionStatus {
   busy: boolean;
   pending: PendingSummary;
   capabilities: ExecutorCapabilities;
+  /** False for a surface that cannot be driven right now (the Chrome bridge is not connected). */
+  ready: boolean;
 }

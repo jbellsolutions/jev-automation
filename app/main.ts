@@ -9,6 +9,7 @@ import { selectComputer } from "../server/computer.js";
 import { loadEnvFile } from "../server/env.js";
 import { createBrain } from "../server/hermes.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
+import { RemoteExecutor } from "../server/executors/remote.js";
 import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
 import { selectSttProvider } from "../server/stt/select.js";
 import { type PanelState, onEscape, onHotkey, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
@@ -144,6 +145,13 @@ async function main() {
   const speaker = selectSpeaker();
   const brain = createBrain();
   const computer = selectComputer();
+  // the user's Chrome: registered up front, driven while the bridge extension is connected
+  const bridge = new RemoteExecutor({
+    onReady: (ready) => {
+      console.log(ready ? "chrome: bridge connected — acting in your Chrome" : "chrome: bridge disconnected — back to the built-in browser");
+      companion.hub.followDefault();
+    },
+  });
   const companion = createCompanion({
     decider,
     token: process.env.JEV_TOKEN,
@@ -153,6 +161,7 @@ async function main() {
     speaker,
     brain,
     computer,
+    bridge,
   });
   if (brain) void brain.health().then((h) => console.log(h.ok ? `brain: Hermes (${h.detail})` : `brain: Hermes not reachable — ${h.detail}`));
   else console.log("brain: none (set HERMES_API_KEY)");
@@ -168,6 +177,7 @@ async function main() {
     deviceScaleFactor: Number(process.env.DEVICE_SCALE_FACTOR ?? 2),
     jpegQuality: Number(process.env.JPEG_QUALITY ?? 80),
   });
+  companion.register(bridge);
   companion.register(playwright);
   void playwright.start();
 

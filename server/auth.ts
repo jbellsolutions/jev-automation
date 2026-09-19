@@ -60,3 +60,14 @@ export function socketAllowed(req: { url?: string; headers: { origin?: string; a
   const query = new URL(req.url ?? "/", "http://x").searchParams.get("token");
   return auth.check(query);
 }
+
+/** Did this upgrade request carry the token (header or `?token=`)? Required no matter the Origin
+ *  for sockets that control the user's own browser. Without a configured token, only loopback
+ *  reachability protects the companion, so the answer is yes. */
+export function tokenPresented(req: { url?: string; headers: { authorization?: string } }, auth: Auth): boolean {
+  if (!auth.configured) return true;
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
+  if (m && auth.check(m[1])) return true;
+  const query = new URL(req.url ?? "/", "http://x").searchParams.get("token");
+  return auth.check(query);
+}
