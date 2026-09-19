@@ -1,0 +1,12 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const token = process.env.JEV_TOKEN;
+const transport = new StdioClientTransport({ command: "npx", args: ["tsx", "server/mcp.ts"], env: { ...process.env, JEV_TOKEN: token }, cwd: process.cwd() });
+const client = new Client({ name: "smoke", version: "0" });
+await client.connect(transport);
+console.log("tools:", (await client.listTools()).tools.map((t) => t.name).join(", "));
+const status = await client.callTool({ name: "jev_status", arguments: {} });
+console.log("--- jev_status ---\n" + status.content[0].text);
+const r = await client.callTool({ name: "jev_browse", arguments: { command: "open news.ycombinator.com and scroll down" } });
+console.log("--- jev_browse ---\n" + r.content[0].text);
+await client.close();
