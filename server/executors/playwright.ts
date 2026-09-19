@@ -1,8 +1,9 @@
 import { type Browser, type BrowserContext, type Page, chromium } from "playwright";
-import type { Action } from "../core/actions.js";
-import { type PageSnapshot, extractElements } from "../core/elements.js";
+import type { Action } from "../../core/actions.js";
+import { type PageSnapshot, extractElements } from "../../core/elements.js";
+import type { Executor, ExecutorCapabilities } from "../../core/executor.js";
 
-export interface BrowserOptions {
+export interface PlaywrightOptions {
   headless: boolean;
   executablePath?: string;
   /** Extra Chromium command-line switches (e.g. proxy or trust settings). */
@@ -21,13 +22,18 @@ export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, 
 
 /** One Chromium controlled through Playwright. Single-user by design: one page at a
  *  time, switching to popups/new tabs automatically so "open in new tab" links work. */
-export class BrowserSession {
+export class PlaywrightExecutor implements Executor {
+  readonly id: string;
+  readonly kind = "playwright" as const;
+  readonly capabilities: ExecutorCapabilities = { screenshot: true, viewport: true, clickAt: true };
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private changeListeners = new Set<() => void>();
 
-  constructor(readonly options: BrowserOptions) {}
+  constructor(readonly options: PlaywrightOptions, id = "playwright") {
+    this.id = id;
+  }
 
   async start(): Promise<void> {
     try {

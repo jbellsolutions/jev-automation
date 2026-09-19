@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { type Action, describeAction } from "../core/actions.js";
-import { BrowserSession } from "./browser.js";
+import { PlaywrightExecutor } from "./executors/playwright.js";
 import { parseOrdinal } from "../core/commands.js";
 import { type Decision, createDecider } from "../core/decide.js";
 import { demoPage } from "./demo.js";
@@ -32,7 +32,7 @@ app.get("/demo", (req, res) => {
 });
 
 const decider = createDecider();
-const browser = new BrowserSession({
+const browser = new PlaywrightExecutor({
   headless: HEADLESS,
   executablePath: process.env.CHROMIUM_EXECUTABLE_PATH,
   args: (process.env.CHROMIUM_ARGS ?? "").split(/\s+/).filter(Boolean),
@@ -70,7 +70,7 @@ async function pushScreenshot(force = false): Promise<void> {
     if (!force && !shotDirty && hash === lastShotHash) return;
     lastShotHash = hash;
     shotDirty = false;
-    broadcast({ type: "screenshot", jpegBase64: buf.toString("base64"), url: browser.url, title: await browser.title() });
+    broadcast({ type: "screenshot", jpegBase64: Buffer.from(buf).toString("base64"), url: browser.url, title: await browser.title() });
   } finally {
     shotInFlight = false;
   }
