@@ -6,6 +6,8 @@
  *  no focus stealing — so the user keeps typing while Jev works. */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Action } from "../../core/actions.js";
 import { MAX_ELEMENTS, type PageSnapshot } from "../../core/elements.js";
@@ -31,6 +33,10 @@ export interface MacExecutorOptions {
   open?: (url: string) => Promise<void>;
   /** The frontmost application's pid — the app the keyboard belongs to (default: `lsappinfo front`). */
   frontPid?: () => Promise<number | null>;
+  /** Floor between real screenshot captures; the hub polls every ~700 ms (fine for a cheap DOM
+   *  read) but a Mac capture is a driver round trip + a `sips` conversion, so it is throttled
+   *  independently and served from cache in between. */
+  screenshotMinIntervalMs?: number;
   now?: () => number;
 }
 
@@ -86,15 +92,15 @@ export function launchDaemon(): Promise<void> {
 
 export class MacExecutor implements Executor {
   readonly kind = "mac" as const;
-  // no live frames: a per-tick window capture through the driver + sips would be far too heavy
-  // for the panel's refresh rate. The panel shows app://<name>; a Mac picture-in-picture is roadmap.
-  readonly capabilities: ExecutorCapabilities = { screenshot: false, viewport: false, clickAt: false };
+  readonly capabilities: ExecutorCapabilities = { screenshot: true, viewport: false, clickAt: false };
   readonly viewport = { width: 1280, height: 800 };
   private readonly driver: Driver;
   private held: Held | null = null;
   private available = false;
   private readonly changeListeners = new Set<() => void>();
   private readonly now: () => number;
+  private lastShot: { at: number; buf: Uint8Array | null } | null = null;
+  private shotInFlight: Promise<Uint8Array | null> | null = null;
 
   constructor(
     private readonly opts: MacExecutorOptions = {},
@@ -185,7 +191,37 @@ export class MacExecutor implements Executor {
   }
 
   async screenshot(): Promise<Uint8Array | null> {
-    return null; // capabilities.screenshot is false; the hub never asks
+    const floor = this.opts.screenshotMinIntervalMs ?? 1500;
+    if (this.lastShot && this.now() - this.lastShot.at < floor) return this.lastShot.buf;
+    if (this.shotInFlight) return this.shotInFlight; // the hub polls faster than a capture takes: share it
+    this.shotInFlight = this.captureScreenshot().finally(() => {
+      this.shotInFlight = null;
+    });
+    return this.shotInFlight;
+  }
+
+  private async captureScreenshot(): Promise<Uint8Array | null> {
+    const win = this.held?.window ?? (await this.front().catch(() => null));
+    if (!win) {
+      this.lastShot = { at: this.now(), buf: null };
+      return null;
+    }
+    const png = join(tmpdir(), `jev-mac-${process.pid}.png`);
+    const jpg = join(tmpdir(), `jev-mac-${process.pid}.jpg`);
+    let buf: Uint8Array | null = null;
+    try {
+      await this.call("get_window_state", { pid: win.pid, window_id: win.window_id, include_accessibility_tree: false, max_dimension: 1280, screenshot_out_file: png });
+      // the driver writes PNG; the UIs expect JPEG frames — sips ships with macOS
+      await new Promise<void>((resolve, reject) => execFile("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "70", png, "--out", jpg], (err) => (err ? reject(err) : resolve())));
+      const file = await readFile(jpg);
+      buf = new Uint8Array(file.buffer, file.byteOffset, file.byteLength);
+    } catch {
+      buf = null;
+    } finally {
+      await Promise.all([rm(png, { force: true }), rm(jpg, { force: true })]).catch(() => {});
+    }
+    this.lastShot = { at: this.now(), buf };
+    return buf;
   }
 
   async execute(action: Action): Promise<string> {
@@ -206,11 +242,18 @@ export class MacExecutor implements Executor {
         return `Clicked ${action.label}`;
       }
       case "type": {
+        // background: writing to an element (by token) or to whatever already has the caret (no
+        // token) both work without fronting the window — confirmed live. Only the trailing Enter
+        // needs `target()`'s brief foreground (background press_key returned "candidates" /
+        // never fired against TextEdit). Fronting for the text insertion too was the M5 bug: two
+        // foreground front/restore cycles per typed instruction, back to back on a fast lane
+        // sequence, could restore focus to the wrong app between one instruction and the next —
+        // three queued "type … and press enter" commands landed only the first.
         if (action.elementId) {
           const { pid, element } = this.locate(action.elementId, action.label ?? action.elementId);
           await this.byToken(action.label ?? action.elementId, () => this.call("type_text", { pid, element_token: element.element_token, text: action.text }));
         } else {
-          await this.call("type_text", { ...this.target(), text: action.text });
+          await this.call("type_text", { pid: this.pidFor(), text: action.text });
         }
         if (action.submit) await this.call("press_key", { ...this.target(), key: "return" });
         this.invalidate();

@@ -118,7 +118,7 @@ export function App() {
           fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
         />
         <aside className="control-pane">
-          <MicButton speech={speech} speaking={speaking} paused={paused} onInterrupt={interrupt} onResume={() => setPaused(false)} />
+          <MicButton speech={speech} speaking={speaking} paused={paused} onInterrupt={interrupt} onResume={() => { setPaused(false); speech.start(); }} />
           <CommandInput onSubmit={(t) => command(t, "text")} />
           {state.pending?.kind === "confirm" && (
             <ConfirmCard

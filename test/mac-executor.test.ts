@@ -98,7 +98,9 @@ describe("MacExecutor over cua-driver", () => {
     ]);
     await mac.snapshot();
     expect(await mac.execute({ kind: "type", elementId: null, label: null, text: "hi", submit: false })).toBe('Typed "hi"');
-    expect(calls.at(-1)).toEqual({ tool: "type_text", args: { ...win, text: "hi" } });
+    // background, not foreground: fronting for the caret write too let a fast queue of typed
+    // instructions restore focus to the wrong app between one and the next (M5 follow-up)
+    expect(calls.at(-1)).toEqual({ tool: "type_text", args: { pid: 100, text: "hi" } });
     expect(await mac.execute({ kind: "press", key: "cmd+enter" })).toBe("Pressed cmd+enter");
     expect(calls.at(-1)).toEqual({ tool: "press_key", args: { ...win, key: "return", modifiers: ["cmd"] } });
     expect(await mac.execute({ kind: "scroll", direction: "down" })).toBe("Scrolled down");
