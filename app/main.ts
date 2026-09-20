@@ -7,7 +7,7 @@ import { createDecider } from "../core/decide.js";
 import { createCompanion } from "../server/companion.js";
 import { selectComputer } from "../server/computer.js";
 import { loadEnvFile } from "../server/env.js";
-import { createBrain } from "../server/hermes.js";
+import { createBrain } from "../server/brain/openrouter.js";
 import { FrontExecutor } from "../server/executors/front.js";
 import { selectMac } from "../server/executors/mac.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
@@ -166,8 +166,8 @@ async function main() {
     computer,
     bridge,
   });
-  if (brain) void brain.health().then((h) => console.log(h.ok ? `brain: Hermes (${h.detail})` : `brain: Hermes not reachable — ${h.detail}`));
-  else console.log("brain: none (set HERMES_API_KEY)");
+  if (brain) void brain.health().then((h) => console.log(h.ok ? `brain: ${brain.name} (${h.detail})` : `brain: ${brain.name} not reachable — ${h.detail}`));
+  else console.log("brain: none (set OPENROUTER_API_KEY)");
   const port = await companion.listen(PORT);
   baseUrl = `http://127.0.0.1:${port}`;
   const playwright = new PlaywrightExecutor({

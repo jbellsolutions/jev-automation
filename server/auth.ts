@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 
-/** Shared-secret auth for programmatic callers (HTTP API, the Chrome bridge, the MCP server).
+/** Shared-secret auth for programmatic callers (the HTTP API, the Chrome bridge).
  *  UI sockets from allowed origins don't need it; the companion only listens on loopback. */
 export interface Auth {
   readonly configured: boolean;

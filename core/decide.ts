@@ -109,7 +109,7 @@ export function buildQuestions(parsed: ParsedCommand, snapshot: PageSnapshot): Q
   const questions: Questions = {
     route: choice(
       {
-        question: "The user is talking to their assistant (Hermes), who answers, remembers and uses tools. Should this go to Hermes as conversation, or is it an obvious quick action for the browser on the current page, or for opening a Mac app?",
+        question: "The user is talking to their assistant, who answers and remembers. Should this go to the assistant as conversation, or is it an obvious quick action for the browser on the current page, or for opening a Mac app?",
         command: parsed.text,
       },
       ROUTES as unknown as ChoiceCriteria,

@@ -3,11 +3,11 @@ import type { BrainProgress } from "../state.ts";
 const STATE_LABEL: Record<BrainProgress["state"], string> = { running: "working…", waiting: "waiting for you", completed: "done", failed: "failed", cancelled: "stopped" };
 
 /** What the brain has said and done for one step: streamed reply text plus a tool timeline. */
-export function HermesCard({ brain }: { brain: BrainProgress }) {
+export function BrainCard({ brain }: { brain: BrainProgress }) {
   return (
-    <div className={`hermes ${brain.state}`}>
-      <div className="hermes-head">
-        <span className="tag hermes">Hermes</span>
+    <div className={`brain ${brain.state}`}>
+      <div className="brain-head">
+        <span className="tag brain">Brain</span>
         <span className="muted">{STATE_LABEL[brain.state]}</span>
         {brain.retries ? <span className="muted">· retry {brain.retries}{brain.fresh ? ", fresh conversation" : ""}</span> : null}
       </div>

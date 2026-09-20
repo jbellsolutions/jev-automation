@@ -32,7 +32,7 @@ describe("reducer: brain events", () => {
     const done = reducer(s, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "completed", output: "Two meetings today.\nStandup at 9." } });
     expect(done.entries[1]!.brain?.state).toBe("completed");
     expect(done.entries[1]!.result).toEqual({ text: "Two meetings today.", level: "ok" });
-    expect(done.status).toEqual({ text: "Hermes: done", level: "ok" });
+    expect(done.status).toEqual({ text: "Brain: done", level: "ok" });
   });
 
   it("a retry starts the run's text over and says so, keeping the tool record", () => {
@@ -45,15 +45,15 @@ describe("reducer: brain events", () => {
     ]);
     expect(s.entries[1]!.brain).toMatchObject({ runId: "run_2", text: "", state: "running", retries: 1, fresh: false, tools: [{ tool: "gcal" }] });
     expect(s.entries[1]!.result).toEqual({ text: "Retrying…", level: "warn" });
-    expect(s.status).toEqual({ text: "Hermes: retrying…", level: "warn" });
+    expect(s.status).toEqual({ text: "Brain: retrying…", level: "warn" });
     const fresh = reducer(s, { type: "brain_event", stepId: 7, runId: "run_3", event: { kind: "retrying", attempt: 3, fresh: true } });
     expect(fresh.entries[1]!.brain).toMatchObject({ runId: "run_3", retries: 2, fresh: true });
-    expect(fresh.status.text).toBe("Hermes: retrying in a fresh conversation…");
+    expect(fresh.status.text).toBe("Brain: retrying in a fresh conversation…");
   });
 
   it("raises and clears the approval card", () => {
     const s = run([...start, { type: "brain_event", stepId: 7, runId: "run_1", event: { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] } }]);
-    expect(s.approval).toEqual({ runId: "run_1", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
+    expect(s.approval).toEqual({ runId: "run_1", question: "Brain wants to read your calendar. Allow it?", choices: ["once", "deny"] });
     expect(s.entries[1]!.brain?.state).toBe("waiting");
     // a browser question and outcome live in their own slot; the brain's own events clear the approval
     const both = reducer(s, { type: "confirm", actionLabel: "Click Delete", reason: "risky" });

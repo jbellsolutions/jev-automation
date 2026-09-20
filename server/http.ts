@@ -1,5 +1,5 @@
-/** JSON API for programmatic callers: the MCP server, scripts, and later the phone. Every
- *  route except /api/health requires the bearer token. */
+/** JSON API for programmatic callers: scripts, and later the phone. Every route except
+ *  /api/health requires the bearer token. */
 import { type Response, Router, json } from "express";
 import type { Decider } from "../core/decide.js";
 import type { Session } from "../core/session.js";

@@ -3,7 +3,7 @@
  *  utterance before it is split into browser steps, so "find 20 dentists and put them in a
  *  sheet" reaches the brain in one piece.
  *
- *  The brain (Hermes) is the person the user talks to; the other lanes exist only for the
+ *  The brain is the person the user talks to; the other lanes exist only for the
  *  obvious cases where a round trip through it would be a waste: one plain action on the page
  *  that is open, or opening a named Mac app. Anything else — greetings, questions, half
  *  sentences, every to-do — is conversation. */

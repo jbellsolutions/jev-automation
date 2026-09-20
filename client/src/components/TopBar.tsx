@@ -25,15 +25,15 @@ export function TopBar({
       <div className="brand">
         <span className="dot" />
         <strong>{desktop ? "Jev" : "Jev Voice Browser"}</strong>
-        <span className="sub">{paused ? "paused — nothing is heard, said or done" : desktop ? "⌥Space to talk · Esc to hide" : "speak · Jev decides · Chromium acts"}</span>
+        <span className="sub">{paused ? "paused — nothing is heard, said or done" : desktop ? "⌥Space to show · Esc to hide" : "type · Jev decides · Chromium acts"}</span>
       </div>
       {onStop && busy && !paused && (
-        <button type="button" className="stop-btn" title="Stop everything: the voice, the browser and Hermes" onClick={onStop}>
+        <button type="button" className="stop-btn" title="Stop everything: the current step and the brain" onClick={onStop}>
           ■ Stop
         </button>
       )}
       {onPause && (
-        <button type="button" className={`pause-btn${paused ? " on" : ""}`} title={paused ? "Switch Jev back on" : "Switch Jev off: it stops listening, talking and acting until resumed"} onClick={() => onPause(!paused)}>
+        <button type="button" className={`pause-btn${paused ? " on" : ""}`} title={paused ? "Switch Jev back on" : "Switch Jev off: it stops acting until resumed"} onClick={() => onPause(!paused)}>
           {paused ? "⏻ Resume" : "⏻ Pause"}
         </button>
       )}

@@ -26,7 +26,7 @@ export interface CompanionOptions {
   defaultSession?: string;
   /** Extra origins allowed to open UI sockets (e.g. "chrome-extension://*"). */
   extraOrigins?: string[];
-  /** The agent behind the `hermes` route (Hermes); without one such commands stay local. */
+  /** The agent behind the `hermes` route; without one such commands stay local. */
   brain?: Brain | null;
   /** The Mac lane (open apps); without one "open slack" goes to the brain or is refused. */
   computer?: Computer | null;

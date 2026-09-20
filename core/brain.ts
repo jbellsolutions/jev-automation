@@ -1,6 +1,7 @@
-/** The brain lane: anything that is not a direct browser or Mac action goes to a long-lived
- *  agent (Hermes) that owns tools, skills and memory. This file is the pure seam; the HTTP/SSE
- *  client lives in server/hermes.ts so core/ stays host-free. */
+/** The brain lane: anything that is not a direct browser or Mac action goes to a model behind
+ *  Jev that can answer, reason and draft — it never itself clicks, types or opens anything;
+ *  Jev's own fast lane does that. This file is the pure seam; a concrete implementation (e.g.
+ *  server/brain/openrouter.ts) lives outside core so core/ stays host-free. */
 
 /** What the assistant may answer an approval request with. Which ones a given request accepts
  *  arrives with the request (`choices`); anything not offered degrades to "once". */

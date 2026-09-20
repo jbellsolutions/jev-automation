@@ -9,7 +9,7 @@ import { FrontExecutor } from "./executors/front.js";
 import { selectMac } from "./executors/mac.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
 import { RemoteExecutor } from "./executors/remote.js";
-import { createBrain } from "./hermes.js";
+import { createBrain } from "./brain/openrouter.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HEADLESS = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
@@ -61,12 +61,12 @@ async function main(): Promise<void> {
   console.log(front ? (mac!.ready ? "Mac: cua-driver ready — acting in the app in front" : "Mac: cua-driver not answering — Mac apps off (run hermes computer-use doctor)") : "Mac: off");
   console.log(`Jev voice browser → http://localhost:${port}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
-  console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
+  console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api");
   console.log(companion.auth.configured ? "Chrome: waiting for the bridge extension (load dist/extension unpacked; token = JEV_TOKEN)" : "Chrome: bridge disabled — set JEV_TOKEN");
   if (brain) {
     const h = await brain.health();
-    console.log(h.ok ? `Brain: Hermes (${h.detail}) at ${process.env.HERMES_API_URL ?? "http://127.0.0.1:8642"}` : `Brain: Hermes configured but not reachable — ${h.detail}`);
-  } else console.log("Brain: none (set HERMES_API_KEY to route questions and tasks to Hermes)");
+    console.log(h.ok ? `Brain: ${brain.name} (${h.detail})` : `Brain: ${brain.name} configured but not reachable — ${h.detail}`);
+  } else console.log("Brain: none (set OPENROUTER_API_KEY to route questions and tasks to the assistant)");
   console.log(computer ? "Computer: open apps via open -a" : "Computer: off");
 }
 

@@ -134,15 +134,15 @@ function applyBrainEvent(state: State, stepId: number, runId: string, event: Bra
   let approval = state.approval;
   let status = state.status;
   if (event.kind === "approval") {
-    approval = { runId, question: `Hermes wants to ${event.summary}. Allow it?`, choices: event.choices };
-    status = { text: "Hermes is waiting for your approval", level: "warn" };
+    approval = { runId, question: `Brain wants to ${event.summary}. Allow it?`, choices: event.choices };
+    status = { text: "Brain is waiting for your approval", level: "warn" };
   } else if (approval?.runId === runId && (event.kind === "approved" || event.kind === "completed" || event.kind === "failed" || event.kind === "cancelled")) {
     approval = null;
   }
-  if (event.kind === "completed") status = { text: "Hermes: done", level: "ok" };
-  else if (event.kind === "failed") status = { text: `Hermes: ${event.error}`, level: "error" };
-  else if (event.kind === "retrying") status = { text: event.fresh ? "Hermes: retrying in a fresh conversation…" : "Hermes: retrying…", level: "warn" };
-  else if (event.kind === "cancelled") status = { text: "Hermes: stopped", level: "warn" };
+  if (event.kind === "completed") status = { text: "Brain: done", level: "ok" };
+  else if (event.kind === "failed") status = { text: `Brain: ${event.error}`, level: "error" };
+  else if (event.kind === "retrying") status = { text: event.fresh ? "Brain: retrying in a fresh conversation…" : "Brain: retrying…", level: "warn" };
+  else if (event.kind === "cancelled") status = { text: "Brain: stopped", level: "warn" };
   return { ...state, entries, approval, status };
 }
 
