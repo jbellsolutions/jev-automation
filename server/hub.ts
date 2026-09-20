@@ -78,8 +78,30 @@ export interface HubOptions {
 export class Hub {
   private readonly entries = new Map<string, Entry>();
   private readonly owner = new Map<WebSocket, string>();
+  private pausedFlag = false;
+  private readonly pauseListeners = new Set<(paused: boolean) => void>();
 
   constructor(private readonly opts: HubOptions) {}
+
+  /** Off means off: while paused nothing is heard, said or done, whoever asks. */
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+
+  setPaused(paused: boolean): void {
+    if (this.pausedFlag === paused) return;
+    this.pausedFlag = paused;
+    if (paused) for (const e of this.entries.values()) e.session.cancel(true);
+    const msg: ServerMessage = { type: "paused", paused };
+    const data = JSON.stringify(msg);
+    for (const ws of this.owner.keys()) if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    for (const fn of this.pauseListeners) fn(paused);
+  }
+
+  onPause(fn: (paused: boolean) => void): () => void {
+    this.pauseListeners.add(fn);
+    return () => this.pauseListeners.delete(fn);
+  }
 
   register(executor: Executor): Session {
     const id = executor.id;
@@ -93,6 +115,7 @@ export class Hub {
       brain: this.opts.brain,
       computer: this.opts.computer,
       afterAction: () => streamer.push(true),
+      onSleep: () => this.setPaused(true),
     });
     const unsubSession = session.subscribe((msg) => this.broadcast(id, msg));
     const unsubChange = executor.onChange(() => streamer.markDirty());
@@ -161,6 +184,7 @@ export class Hub {
       jev: { enabled: this.opts.decider.enabled, model: this.opts.decider.model },
       viewport: executor.viewport,
       stt: { provider: this.opts.sttProvider ?? null },
+      paused: this.pausedFlag,
     };
     ws.send(JSON.stringify(hello));
     e.streamer.start();

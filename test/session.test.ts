@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HeuristicDecider } from "../core/decide.js";
 import type { PageElement } from "../core/elements.js";
 import type { ServerMessage } from "../core/protocol.js";
+import { isSleepCommand } from "../core/route.js";
 import { Session } from "../core/session.js";
 import { FakeBrain, tick, waitFor } from "./helpers/fake-brain.js";
 import { FakeExecutor, el } from "./helpers/fake-executor.js";
@@ -752,5 +753,45 @@ describe("Session: spoken feedback in degraded modes", () => {
     const r = await asked;
     expect(r).toMatchObject({ ok: false, output: "socket hang up" });
     expect(speaker.said.at(-1)).toBe("Hermes dropped out: socket hang up");
+  });
+});
+
+describe("Session: the pause switch", () => {
+  it("'go to sleep' by voice stops everything, asks the host to pause, and says so", async () => {
+    const executor = new FakeExecutor();
+    const said: string[] = [];
+    const speaker = { said, async speak(t: string) { said.push(t); }, stop() {} };
+    const brain = new FakeBrain();
+    let paused = false;
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, onSleep: () => (paused = true) });
+    await session.command("what's on my calendar", { speak: true });
+    const r = await session.command("go to sleep", { speak: true });
+    expect(paused).toBe(true);
+    expect(r.steps[0]!.result?.text).toMatch(/^Okay, going quiet/);
+    expect(said.at(-1)).toMatch(/^Okay, going quiet/);
+    expect(brain.sent).toEqual(["what's on my calendar"]); // the sleep command never reaches the brain
+    // "that's all for now" and "pause" count too; a question does not
+    expect(isSleepCommand("that's all for now.")).toBe(true);
+    expect(isSleepCommand("pause")).toBe(true);
+    expect(isSleepCommand("turn off the lights")).toBe(false);
+  });
+
+  it("narrates a long brain run so the user knows it is alive", async () => {
+    const executor = new FakeExecutor();
+    const said: string[] = [];
+    const speaker = { async speak(t: string) { said.push(t); }, stop() {} };
+    const brain = new FakeBrain();
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, progressMs: 15 });
+    const asked = session.ask("find me 20 dentists in austin", { speak: true });
+    await tick();
+    brain.emit("run_1", { kind: "tool_start", tool: "web_search", preview: "" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(said.filter((s) => s.startsWith("Still on it"))).not.toHaveLength(0);
+    expect(said.find((s) => s.startsWith("Still on it"))).toBe("Still on it — 1 tool in. Say stop to drop it.");
+    brain.emit("run_1", { kind: "completed", output: "Done." }, null);
+    await asked;
+    const n = said.length;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(said).toHaveLength(n); // the narration stops with the run
   });
 });

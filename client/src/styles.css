@@ -41,6 +41,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 sys
 .mic[aria-pressed="true"] { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.4s ease-out infinite; }
 .mic:disabled { opacity: .4; cursor: not-allowed; animation: none; }
 .mic.speaking { border-color: var(--accent); background: var(--accent); color: #fff; animation: pulse 0.9s ease-out infinite; }
+.mic.paused { border-color: var(--muted); color: var(--muted); opacity: .6; animation: none; }
+.topbar.paused { opacity: .85; }
+.stop-btn, .pause-btn { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; margin-left: 8px; -webkit-app-region: no-drag; }
+.stop-btn { border-color: var(--danger); color: var(--danger); }
+.stop-btn:hover { background: var(--danger); color: #fff; }
+.pause-btn:hover, .pause-btn.on { border-color: var(--warn); color: var(--warn); }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,107,107,.55); } 100% { box-shadow: 0 0 0 18px rgba(255,107,107,0); } }
 .mic-text { min-width: 0; }
 .mic-label { font-weight: 600; }

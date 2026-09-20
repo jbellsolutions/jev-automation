@@ -12,7 +12,7 @@ import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { RemoteExecutor } from "../server/executors/remote.js";
 import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
 import { selectSttProvider } from "../server/stt/select.js";
-import { type PanelState, onEscape, onHotkey, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
+import { type PanelState, onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
 import { trayIconPng } from "./tray-icon.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/app
@@ -28,7 +28,9 @@ let tray: Tray | null = null;
 let panel: PanelState = { visible: false, listening: false };
 let baseUrl = "";
 
-function icon(kind: "idle" | "listening" | "busy") {
+let buildTrayMenu: () => Menu = () => Menu.buildFromTemplate([]);
+
+function icon(kind: "idle" | "listening" | "busy" | "paused") {
   const img = nativeImage.createFromBuffer(trayIconPng(kind, 44), { scaleFactor: 2 });
   img.setTemplateImage(true);
   return img;
@@ -55,14 +57,20 @@ function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
         // the renderer holds the companion socket; it asks the session to stop talking
         win?.webContents.send("jev:interrupt");
         break;
+      case "resume":
+        setPaused(false);
+        break;
     }
   }
   refreshTray();
 }
 
+let setPaused: (paused: boolean) => void = () => {};
+
 function refreshTray() {
-  tray?.setImage(icon(panel.listening ? "listening" : "idle"));
-  tray?.setToolTip(panel.listening ? "Jev — listening (⌥Space or Esc to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to talk`);
+  tray?.setImage(icon(panel.paused ? "paused" : panel.listening ? "listening" : "idle"));
+  tray?.setToolTip(panel.paused ? "Jev — paused (⌥Space or the menu to resume)" : panel.listening ? "Jev — listening (⌥Space or Esc to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to talk`);
+  tray?.setContextMenu(buildTrayMenu());
 }
 
 function placeBottomRight(w: BrowserWindow) {
@@ -197,17 +205,23 @@ async function main() {
 
   win = createWindow();
   tray = new Tray(icon("idle"));
-  tray.setContextMenu(
+  setPaused = (paused) => companion.hub.setPaused(paused);
+  companion.hub.onPause((paused) => {
+    panel = onPaused(panel, paused);
+    if (paused) win?.webContents.send("jev:stop-listening");
+    refreshTray();
+  });
+  buildTrayMenu = () =>
     Menu.buildFromTemplate([
       { label: "Show Jev", click: () => showPanel() },
-      { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects) },
+      { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects), enabled: !panel.paused },
+      { label: panel.paused ? "Resume Jev" : "Pause Jev (off: hears, says and does nothing)", click: () => setPaused(!panel.paused) },
       { type: "separator" },
       { label: `Voice in: ${stt ? stt.name : "browser speech"} · out: ${describeSpeaker(speaker)}`, enabled: false },
       { label: `Jev: ${decider.enabled ? decider.model : "heuristics"}`, enabled: false },
       { type: "separator" },
       { label: "Quit Jev", click: () => app.quit() },
-    ]),
-  );
+    ]);
   tray.on("click", () => (win?.isVisible() ? win.hide() : showPanel()));
   refreshTray();
 

@@ -26,6 +26,22 @@ afterEach(async () => {
   companion = null;
 });
 
+describe("HTTP API: pause switch", () => {
+  it("refuses commands and asks with 409 while paused, and reports the switch", async () => {
+    const { call, post, executor } = await boot({ brain: new FakeBrain() });
+    expect((await post("/api/pause", { paused: true })).status).toBe(200);
+    expect(await (await call("/api/health", {}, null)).json()).toMatchObject({ paused: true });
+    const r = await post("/api/command", { text: "scroll down" });
+    expect(r.status).toBe(409);
+    expect((await r.json()).error).toMatch(/paused/);
+    expect((await post("/api/ask", { text: "what's up" })).status).toBe(409);
+    expect(executor.executed).toEqual([]);
+    await post("/api/pause", { paused: false });
+    expect((await post("/api/command", { text: "scroll down" })).status).toBe(200);
+    expect(executor.executed.map((a) => a.kind)).toEqual(["scroll"]);
+  });
+});
+
 describe("HTTP API", () => {
   it("serves health without a token", async () => {
     const { call } = await boot();

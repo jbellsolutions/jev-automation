@@ -6,6 +6,8 @@ import path from "node:path";
 
 export interface JevState {
   hermesSessionId?: string;
+  /** Model that conversation was created on (null = Hermes' default); a change means a new one. */
+  hermesModel?: string | null;
 }
 
 export const defaultStatePath = () => path.join(process.env.JEV_HOME ?? path.join(homedir(), ".jev"), "state.json");

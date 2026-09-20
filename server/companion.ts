@@ -10,7 +10,7 @@ import type { Brain } from "../core/brain.js";
 import type { Decider } from "../core/decide.js";
 import type { Executor } from "../core/executor.js";
 import type { Speaker } from "../core/speak.js";
-import type { ClientMessage } from "../core/protocol.js";
+import type { ClientMessage, ServerMessage } from "../core/protocol.js";
 import type { Computer } from "../core/session.js";
 import { type Auth, allowedOrigins, createAuth, socketAllowed, tokenPresented } from "./auth.js";
 import type { RemoteExecutor } from "./executors/remote.js";
@@ -111,7 +111,15 @@ export function createCompanion(opts: CompanionOptions): Companion {
       if (!session) return;
       switch (msg.type) {
         case "command":
-          if (typeof msg.text === "string") void session.command(msg.text, { speak: msg.via === "voice" });
+          if (typeof msg.text !== "string") break;
+          if (hub.paused) {
+            ws.send(JSON.stringify({ type: "status", text: "Jev is paused — resume from the tray, ⌥Space, or the panel", level: "warn" } satisfies ServerMessage));
+            break;
+          }
+          void session.command(msg.text, { speak: msg.via === "voice" });
+          break;
+        case "pause":
+          hub.setPaused(!!msg.paused);
           break;
         case "confirm_reply":
           void session.reply(!!msg.ok);

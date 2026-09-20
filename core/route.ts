@@ -54,6 +54,13 @@ export function appRequest(text: string): string | null {
 const STOP = /^(?:stop|cancel|halt|wait|never ?mind|abort|hold on)(?:\s+(?:that|it|this|everything))?$/;
 const RESET = /^(?:(?:start|begin)\s+(?:a\s+)?(?:new|fresh)\s+(?:conversation|chat|session|thread)|(?:new|fresh)\s+(?:conversation|chat|session|thread|start)|start\s+over|reset\s+(?:the\s+)?(?:conversation|chat|session|thread)|forget\s+(?:all\s+)?(?:that|this|the\s+conversation))(?:\s+please)?$/;
 
+const SLEEP = /^(?:go to sleep|(?:go )?(?:to )?sleep(?: now)?|pause|turn (?:yourself )?off|shut (?:up|down)|that's (?:all|it)(?: for now)?|(?:good ?night|goodnight))(?:\s+(?:jev|jarvis|hermes))?(?:\s+please)?$/;
+
+/** "go to sleep", "pause", "turn off", "that's all for now": switch the assistant off. */
+export function isSleepCommand(text: string): boolean {
+  return SLEEP.test(text.trim().toLowerCase().replace(/[.!?,]+$/, ""));
+}
+
 /** "new conversation", "start over", "fresh start": the brain forgets this thread and begins another. */
 export function isResetCommand(text: string): boolean {
   return RESET.test(text.trim().toLowerCase().replace(/[.!?,]+$/, ""));

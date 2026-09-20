@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BrainEvent } from "../core/brain.js";
-import { HermesBrain, VOICE_INSTRUCTIONS, createBrain, mapHermesEvent, parseSseFrames, terminalFromStatus } from "../server/hermes.js";
+import { HermesBrain, VOICE_INSTRUCTIONS, createBrain, mapHermesEvent, parseSseFrames, sessionStore, terminalFromStatus } from "../server/hermes.js";
+import { readState } from "../server/state.js";
 
 /** Just enough of the Hermes API server (v0.21.1 wire shapes) to drive HermesBrain. */
 class FakeHermes {
@@ -270,26 +271,49 @@ describe("HermesBrain", () => {
     const state = { get: () => store.id, set: (id: string) => void (store.id = id) };
     let t = new Date(2026, 8, 19, 18, 5, 7);
     const { brain, fake } = await boot({ sessionId: undefined, state, now: () => t, instructions: "be brief" });
-    expect(brain.session).toBe("jev-voice-20260919-180507");
+    const first = brain.session;
+    expect(first).toMatch(/^jev-voice-20260919-180507-[0-9a-f]{3}$/);
     await brain.send("hi");
-    expect(store.id).toBe("jev-voice-20260919-180507");
-    expect(fake.requests.find((r) => r.path === "/v1/runs")!.body).toMatchObject({ session_id: "jev-voice-20260919-180507", instructions: "be brief" });
+    expect(store.id).toBe(first);
+    expect(fake.requests.find((r) => r.path === "/v1/runs")!.body).toMatchObject({ session_id: first, instructions: "be brief" });
 
     await brain.reset(); // same second: still a different id
-    expect(brain.session).toBe("jev-voice-20260919-180507-2");
+    expect(brain.session).not.toBe(first);
+    expect(brain.session).toMatch(/^jev-voice-20260919-180507-/);
     t = new Date(2026, 8, 19, 18, 5, 9);
     await brain.send("again", { fresh: true });
-    expect(brain.session).toBe("jev-voice-20260919-180509");
-    expect(store.id).toBe("jev-voice-20260919-180509");
-    expect([...fake.sessions]).toEqual(["jev-voice-20260919-180507", "jev-voice-20260919-180509"]);
+    const third = brain.session;
+    expect(third).toMatch(/^jev-voice-20260919-180509-/);
+    expect(store.id).toBe(third);
+    expect([...fake.sessions]).toEqual([first, third]);
 
     // a restart picks the remembered conversation up
     const again = new HermesBrain({ baseUrl: fake.url, apiKey: "k", state, now: () => t });
-    expect(again.session).toBe("jev-voice-20260919-180509");
+    expect(again.session).toBe(third);
     // and instructions can be switched off
     const quiet = new HermesBrain({ baseUrl: fake.url, apiKey: "k", sessionId: "s", instructions: null });
     await quiet.send("x");
     expect(fake.requests.at(-1)!.body).toEqual({ input: "x", session_id: "s" });
+  });
+
+  it("pins the voice model on the session it creates, and a model change means a new conversation", async () => {
+    const { fake } = await boot();
+    const file = path.join(process.env.JEV_HOME!, "state.json");
+    const env = { HERMES_API_KEY: "k", HERMES_API_URL: fake.url, HERMES_VOICE_MODEL: "deepseek-v4.1-flash" };
+    const a = createBrain(env, sessionStore("deepseek-v4.1-flash", file))!;
+    await a.send("hi");
+    expect(fake.requests.find((r) => r.path === "/api/sessions")!.body).toMatchObject({ id: a.session, model: "deepseek-v4.1-flash", provider: "ollama-cloud" });
+    expect(fake.requests.find((r) => r.path === "/v1/runs")!.body).toMatchObject({ session_id: a.session, model: "deepseek-v4.1-flash", provider: "ollama-cloud" });
+    expect(readState(file)).toEqual({ hermesSessionId: a.session, hermesModel: "deepseek-v4.1-flash" });
+    // same model on restart: same conversation
+    expect(createBrain(env, sessionStore("deepseek-v4.1-flash", file))!.session).toBe(a.session);
+    // another model: the remembered conversation is left behind
+    const b = createBrain({ ...env, HERMES_VOICE_MODEL: "glm-5.3-flash", HERMES_VOICE_PROVIDER: "ollama-cloud" }, sessionStore("glm-5.3-flash", file))!;
+    expect(b.session).not.toBe(a.session);
+    // no model at all: no model on the session body
+    const plain = createBrain({ HERMES_API_KEY: "k", HERMES_API_URL: fake.url }, sessionStore(undefined, file))!;
+    await plain.send("hi");
+    expect(fake.requests.filter((r) => r.path === "/api/sessions").at(-1)!.body).toEqual({ id: plain.session, title: `Jev (voice) ${plain.session}`, source: "api_server" });
   });
 
   it("createBrain needs the key and defaults the URL", () => {

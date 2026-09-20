@@ -5,7 +5,7 @@
 import { type Action, describeAction } from "./actions.js";
 import { type ApprovalChoice, type Brain, type BrainRun, approvalChoice } from "./brain.js";
 import { parseOrdinal, splitSteps } from "./commands.js";
-import { isResetCommand, isStopWord } from "./route.js";
+import { isResetCommand, isSleepCommand, isStopWord } from "./route.js";
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
@@ -88,6 +88,10 @@ export interface SessionDeps {
   computer?: Computer | null;
   /** Pause before re-sending a failed brain run (tests shorten it). */
   retryDelayMs?: number;
+  /** "go to sleep": the host switches the assistant off (the hub's pause). */
+  onSleep?: () => void;
+  /** How often a long brain run is narrated aloud ("still on it"); 0 = never. */
+  progressMs?: number;
 }
 
 export function summarize(d: Decision): DecisionSummary {
@@ -370,14 +374,15 @@ export class Session {
     this.emit({ type: "speaking", active: false });
   }
 
-  /** Drop whatever is in flight or pending. Bypasses the queue on purpose. */
-  cancel(): void {
-    this.deps.speaker?.stop();
+  /** Drop whatever is in flight or pending. Bypasses the queue on purpose. `quiet` skips the
+   *  "Stopped" status (a pause announces itself). */
+  cancel(quiet = false): void {
+    this.interrupt();
     this.inFlight?.abort();
     this.pending = null;
     this.continuation = null;
     this.stopBrain();
-    this.report("Stopped", "ok");
+    if (!quiet) this.report("Stopped", "ok");
   }
 
   private stopping = new Set<string>();
@@ -470,6 +475,12 @@ export class Session {
     if (isStopWord(trimmed)) this.stopBrain();
 
     if (this.brainFor && isResetCommand(trimmed)) return this.finish([await this.resetBrain(trimmed)]);
+    if (this.deps.onSleep && isSleepCommand(trimmed)) {
+      const step = this.ack(trimmed);
+      this.deps.onSleep();
+      step.result = this.report("Okay, going quiet. Paused until ⌥Space, the tray or the panel wakes me.", "ok");
+      return this.finish([step]);
+    }
 
     if (this.approval && !this.pending && this.brainFor && !isStopWord(trimmed)) {
       // a yes/no answers the agent; anything else is a new command and the request stays open
@@ -758,6 +769,15 @@ export class Session {
       state.resolve(o);
     };
     let handedOver = false;
+    // a long run is narrated now and then, so the user knows it is alive and can say stop
+    const progressMs = this.deps.progressMs ?? 45_000;
+    const progress =
+      state.voice && progressMs > 0
+        ? setInterval(() => {
+            const n = state.tools.length;
+            this.say(n ? `Still on it — ${n} ${n === 1 ? "tool" : "tools"} in. Say stop to drop it.` : "Still on it. Say stop to drop it.");
+          }, progressMs)
+        : null;
     try {
       for await (const event of run.events) {
         this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event });
@@ -813,6 +833,7 @@ export class Session {
       settle({ ok: false, output: errMsg(err) });
       if (state.voice) this.say(clipSpoken(`${name} dropped out: ${errMsg(err)}`, this.maxSpoken));
     } finally {
+      if (progress) clearInterval(progress);
       if (!handedOver) {
         if (!settled) settle({ ok: false, output: "The run ended without an answer" });
         if (this.brain === state) this.brain = null;

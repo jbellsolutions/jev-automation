@@ -12,6 +12,8 @@ export type ClientMessage =
   | { type: "approval_reply"; choice: ApprovalChoice }
   /** Stop talking (the user cut in); whatever is being done carries on. */
   | { type: "interrupt" }
+  /** Switch the assistant off (stops everything, refuses commands until resumed) or back on. */
+  | { type: "pause"; paused: boolean }
   /** Click on the live view; fx/fy are fractions (0–1) of the image so resizes stay accurate. */
   | { type: "click_at"; fx: number; fy: number }
   /** The pixel size the UI has available for the live view; the server sizes the viewport to match. */
@@ -37,9 +39,12 @@ export interface DecisionSummary {
 
 /** WebSocket messages, server -> browser UI. */
 export type ServerMessage =
-  | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number }; stt: { provider: string | null } }
+  | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number }; stt: { provider: string | null }; paused?: boolean }
   /** The assistant is talking (or stopped); UIs mute the microphone meanwhile so it does not hear itself. */
   | { type: "speaking"; active: boolean }
+  /** Jev is switched off (or back on): nothing is heard, said or done while paused — every UI
+   *  and every API caller sees the same switch. */
+  | { type: "paused"; paused: boolean }
   | { type: "screenshot"; jpegBase64: string; url: string; title: string }
   | { type: "viewport"; width: number; height: number }
   | { type: "status"; text: string; level: "info" | "busy" | "ok" | "warn" | "error" }

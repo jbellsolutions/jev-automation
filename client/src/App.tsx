@@ -28,7 +28,15 @@ export function App() {
     [send],
   );
   const speaking = state.speaking;
+  const paused = state.paused;
   const interrupt = useCallback(() => send({ type: "interrupt" }), [send]);
+  /** Stop everything now: the voice, the browser step, and the Hermes run. */
+  const stopAll = useCallback(() => {
+    send({ type: "interrupt" });
+    send({ type: "command", text: "stop", via: "text" });
+  }, [send]);
+  const setPaused = useCallback((p: boolean) => send({ type: "pause", paused: p }), [send]);
+  const busy = state.status.level === "busy" || state.entries.some((e) => e.brain?.state === "running" || e.brain?.state === "waiting");
   const speech = useVoice({
     transport,
     sttProvider: state.stt,
@@ -67,6 +75,11 @@ export function App() {
   useEffect(() => {
     if (desktop) window.jev?.setSpeaking?.(speaking);
   }, [desktop, speaking]);
+  // paused: the microphone goes quiet too (the shell also asks, but the web build has only this)
+  useEffect(() => {
+    if (paused && speech.listening) speech.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
   useEffect(() => {
     if (desktop && window.jev?.autoListen && state.jev && !speech.listening) {
       console.log("[voice] auto-listen: starting");
@@ -90,6 +103,10 @@ export function App() {
       <TopBar
         jev={state.jev}
         desktop={desktop}
+        paused={paused}
+        busy={busy || speaking}
+        onStop={stopAll}
+        onPause={setPaused}
         onHide={desktop ? () => window.jev?.hide?.() : undefined}
       />
       <main className={`layout${desktop ? " desktop" : ""}`}>
@@ -101,7 +118,7 @@ export function App() {
           fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
         />
         <aside className="control-pane">
-          <MicButton speech={speech} speaking={speaking} onInterrupt={interrupt} />
+          <MicButton speech={speech} speaking={speaking} paused={paused} onInterrupt={interrupt} onResume={() => setPaused(false)} />
           <CommandInput onSubmit={(t) => command(t, "text")} />
           {state.pending?.kind === "confirm" && (
             <ConfirmCard

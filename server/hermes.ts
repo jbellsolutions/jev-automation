@@ -19,6 +19,11 @@ export interface HermesOptions {
   sessionId?: string;
   /** Remembers the current session across restarts. */
   state?: { get(): string | undefined; set(id: string): void };
+  /** Model the voice conversation runs on (a Hermes provider model id such as
+   *  `deepseek-v4.1-flash`); unset = Hermes' global default. Sent with every run (the runs API
+   *  reads the body, not the session row) and pinned on the session for its other routes. */
+  model?: string;
+  provider?: string;
   /** Standing instructions sent with every run (see VOICE_INSTRUCTIONS). */
   instructions?: string | null;
   fetch?: typeof fetch;
@@ -46,6 +51,7 @@ Your hands
 - The super-browser tools are a separate hosted browser fleet: use them only when Justin says "Super Browser", when the task is not on this machine, or when it needs its own browsers or scraping at scale. Otherwise leave them alone.
 - Terminal and file tools are this Mac. Memory and session search are your own recall.
 - Spoken to-dos are exactly what was asked: no council, no readiness review, no scaling a list up beyond the number he said. Do the thing, then tell him.
+- Effort cap: try at most two ways to do a thing. If neither works, stop and say in one sentence what is missing or not connected, and ask whether he wants you to keep digging. Never go hunting around the machine for a third and fourth way on your own.
 - If a surface is not available — an app Jev cannot drive yet, a site the browser is not signed in to, a tool that is not connected — say so in one sentence and offer the nearest thing you can do.`;
 
 export function loadVoiceInstructions(file = path.join(process.env.JEV_HOME ?? path.join(homedir(), ".jev"), "voice-instructions.md")): string {
@@ -169,16 +175,18 @@ export class HermesBrain implements Brain {
     return this.sessionId;
   }
 
+  /** Readable (when it started) and unique (a short random tail): two resets in one second,
+   *  or a model change right after start, never land on the same conversation. */
   private newSessionId(): string {
     const d = this.now();
     const p = (n: number) => String(n).padStart(2, "0");
-    return `${SESSION_PREFIX}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const tail = randomUUID().replace(/-/g, "").slice(0, 3);
+    return `${SESSION_PREFIX}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${tail}`;
   }
 
   /** Leave the current conversation behind; the next run starts a new one. */
   async reset(): Promise<void> {
-    const next = this.newSessionId();
-    this.sessionId = next === this.sessionId ? `${next}-2` : next;
+    this.sessionId = this.newSessionId();
     this.sessionReady = null;
   }
 
@@ -218,7 +226,10 @@ export class HermesBrain implements Brain {
   /** Create the assistant's session once; "exists" on a later start is fine. */
   private ensureSession(): Promise<void> {
     this.sessionReady ??= (async () => {
-      const r = await this.request<{ error?: { code?: string; message?: string } }>("POST", "/api/sessions", { id: this.sessionId, title: `Jev (voice) ${this.sessionId}`, source: "api_server" });
+      const body: Record<string, unknown> = { id: this.sessionId, title: `Jev (voice) ${this.sessionId}`, source: "api_server" };
+      if (this.opts.model) body.model = this.opts.model;
+      if (this.opts.provider) body.provider = this.opts.provider;
+      const r = await this.request<{ error?: { code?: string; message?: string } }>("POST", "/api/sessions", body);
       const err = r.data?.error;
       // Hermes also refuses a duplicate *title*, hence the id in it; an id that exists is ours from before
       const exists = r.status === 409 || (typeof err === "object" && /exist/i.test(`${err?.code ?? ""} ${err?.message ?? ""}`));
@@ -237,6 +248,8 @@ export class HermesBrain implements Brain {
     const body: Record<string, unknown> = { input: text, session_id: this.sessionId };
     const instructions = this.opts.instructions === undefined ? VOICE_INSTRUCTIONS : this.opts.instructions;
     if (instructions) body.instructions = instructions;
+    if (this.opts.model) body.model = this.opts.model;
+    if (this.opts.provider) body.provider = this.opts.provider;
     const r = await this.request<{ run_id?: string; error?: unknown }>("POST", "/v1/runs", body, { "Idempotency-Key": randomUUID() }, opts.signal);
     if (r.status !== 202 || !r.data?.run_id) throw this.fail(r.status, r.data, "run");
     const id = r.data.run_id;
@@ -333,25 +346,35 @@ export class HermesBrain implements Brain {
 }
 
 /** The brain from the environment; the current conversation is remembered in ~/.jev/state.json
- *  unless HERMES_SESSION_ID pins one. */
-export function createBrain(env: NodeJS.ProcessEnv = process.env, state: HermesOptions["state"] | null = sessionStore()): HermesBrain | null {
+ *  unless HERMES_SESSION_ID pins one. HERMES_VOICE_MODEL (+ HERMES_VOICE_PROVIDER) picks the
+ *  model the voice conversation runs on; changing it starts a new conversation, since Hermes
+ *  keeps a session on the model it was created with. */
+export function createBrain(env: NodeJS.ProcessEnv = process.env, state: HermesOptions["state"] | null | undefined = undefined): HermesBrain | null {
   const apiKey = env.HERMES_API_KEY?.trim();
   if (!apiKey) return null;
+  const model = env.HERMES_VOICE_MODEL?.trim() || undefined;
+  const provider = env.HERMES_VOICE_PROVIDER?.trim() || (model ? "ollama-cloud" : undefined);
   return new HermesBrain({
     baseUrl: env.HERMES_API_URL?.trim() || "http://127.0.0.1:8642",
     apiKey,
     sessionId: env.HERMES_SESSION_ID?.trim() || undefined,
-    state: state ?? undefined,
+    state: state === undefined ? sessionStore(model) : (state ?? undefined),
+    model,
+    provider,
     instructions: loadVoiceInstructions(),
   });
 }
 
-function sessionStore(): HermesOptions["state"] {
+/** The remembered conversation, but only if it runs on the model configured now. */
+export function sessionStore(model: string | undefined, file?: string): HermesOptions["state"] {
   return {
-    get: () => readState().hermesSessionId,
+    get: () => {
+      const s = readState(file);
+      return (s.hermesModel ?? undefined) === model ? s.hermesSessionId : undefined;
+    },
     set: (id) => {
       try {
-        writeState({ hermesSessionId: id });
+        writeState({ hermesSessionId: id, hermesModel: model ?? null }, file);
       } catch {
         /* a read-only home is not fatal: the session just is not remembered */
       }

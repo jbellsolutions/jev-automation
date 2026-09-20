@@ -44,6 +44,8 @@ export interface State {
   stt: string | null;
   /** The assistant is currently talking. */
   speaking: boolean;
+  /** Switched off: nothing is heard, said or done until resumed. */
+  paused: boolean;
   viewport: { width: number; height: number };
   page: { url: string; title: string; frame: string | null };
   status: { text: string; level: StatusLevel };
@@ -59,6 +61,7 @@ export const initialState: State = {
   jev: null,
   stt: null,
   speaking: false,
+  paused: false,
   viewport: { width: 1280, height: 800 },
   page: { url: "about:blank", title: "", frame: null },
   status: { text: "Connecting…", level: "info" },
@@ -159,9 +162,11 @@ export function reducer(state: State, ev: Event): State {
     case "socket":
       return { ...state, connected: ev.connected, status: ev.connected ? { text: "Connected", level: "ok" } : { text: "Disconnected — retrying…", level: "warn" } };
     case "hello":
-      return { ...state, jev: ev.jev, viewport: ev.viewport, stt: ev.stt?.provider ?? null };
+      return { ...state, jev: ev.jev, viewport: ev.viewport, stt: ev.stt?.provider ?? null, paused: !!ev.paused };
     case "speaking":
       return { ...state, speaking: ev.active };
+    case "paused":
+      return { ...state, paused: ev.paused, speaking: ev.paused ? false : state.speaking, status: ev.paused ? { text: "Paused — hearing, saying and doing nothing", level: "warn" } : { text: "Resumed", level: "ok" } };
     case "viewport":
       return { ...state, viewport: { width: ev.width, height: ev.height } };
     case "screenshot":

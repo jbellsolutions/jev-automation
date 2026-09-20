@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onEscape, onHotkey, onRendererListening, onRendererSpeaking, onWindowVisibility } from "../app/hotkey.js";
+import { onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "../app/hotkey.js";
 import { encodePng, trayAlpha, trayIconPng } from "../app/tray-icon.js";
 
 describe("panel hotkey state machine", () => {
@@ -28,11 +28,32 @@ describe("panel hotkey state machine", () => {
     expect(onRendererSpeaking(s, false)).toBe(s);
   });
 
+  it("paused: the hotkey resumes and listens; pausing drops listening", () => {
+    expect(onHotkey({ visible: true, listening: false, paused: true })).toEqual({ state: { visible: true, listening: true, speaking: false, paused: false }, effects: ["resume", "focus", "start_listening"] });
+    expect(onHotkey({ visible: false, listening: false, paused: true }).effects).toEqual(["resume", "show", "focus", "start_listening"]);
+    expect(onPaused({ visible: true, listening: true, speaking: true }, true)).toEqual({ visible: true, listening: false, speaking: false, paused: true });
+    const s = { visible: true, listening: false, paused: true };
+    expect(onPaused(s, true)).toBe(s);
+    expect(onPaused(s, false)).toEqual({ visible: true, listening: false, paused: false });
+  });
+
   it("follows what the renderer and window report", () => {
     const s = { visible: true, listening: false };
     expect(onRendererListening(s, true)).toEqual({ visible: true, listening: true });
     expect(onRendererListening(s, false)).toBe(s);
     expect(onWindowVisibility(s, false)).toEqual({ visible: false, listening: false });
+  });
+});
+
+describe("tray icon: paused glyph", () => {
+  it("is dimmer than idle and has a bar", () => {
+    const idle = trayAlpha("idle", 44);
+    const paused = trayAlpha("paused", 44);
+    const sum = (a: Uint8Array) => a.reduce((n, v) => n + v, 0);
+    expect(sum(paused)).toBeLessThan(sum(idle));
+    // the bar: full coverage inside the ring's hole at the top centre, where the idle ring is empty
+    expect(paused[12 * 44 + 21]).toBeGreaterThan(200);
+    expect(idle[12 * 44 + 21]).toBe(0);
   });
 });
 

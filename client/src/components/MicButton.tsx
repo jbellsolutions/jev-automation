@@ -8,7 +8,7 @@ const NOTES: Record<string, string> = {
 
 const PROVIDER_NAMES: Record<string, string> = { deepgram: "Deepgram", apple: "on-device" };
 
-export function MicButton({ speech, speaking = false, onInterrupt }: { speech: Voice; speaking?: boolean; onInterrupt?: () => void }) {
+export function MicButton({ speech, speaking = false, paused = false, onInterrupt, onResume }: { speech: Voice; speaking?: boolean; paused?: boolean; onInterrupt?: () => void; onResume?: () => void }) {
   const disabled = speech.availability !== "ok";
   const engine = speech.engine === "streaming" ? (speech.provider ? (PROVIDER_NAMES[speech.provider] ?? speech.provider) : "streaming") : "browser speech";
   const label =
@@ -16,8 +16,10 @@ export function MicButton({ speech, speaking = false, onInterrupt }: { speech: V
       ? "Voice not supported here"
       : speech.availability === "insecure"
         ? "Voice needs HTTPS or localhost"
-        : speaking
-          ? "Speaking — ⌥Space, Esc or tap to cut in"
+        : paused
+          ? "Paused — tap, ⌥Space or the tray to resume"
+          : speaking
+            ? "Speaking — ⌥Space, Esc or tap to cut in"
           : speech.listening
             ? `Listening (${engine}) — ⌥Space or Esc to stop`
             : `Tap to start listening · ${engine}`;
@@ -28,11 +30,11 @@ export function MicButton({ speech, speaking = false, onInterrupt }: { speech: V
         <button
           id="mic"
           type="button"
-          className={`mic${speaking ? " speaking" : ""}`}
+          className={`mic${speaking ? " speaking" : ""}${paused ? " paused" : ""}`}
           aria-pressed={speech.listening}
-          title={speaking ? "Stop talking" : speech.listening ? "Stop listening" : "Start listening"}
+          title={paused ? "Resume Jev" : speaking ? "Stop talking" : speech.listening ? "Stop listening" : "Start listening"}
           disabled={disabled}
-          onClick={speaking && onInterrupt ? onInterrupt : speech.toggle}
+          onClick={paused && onResume ? onResume : speaking && onInterrupt ? onInterrupt : speech.toggle}
         >
           <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
             <path fill="currentColor" d="M12 15a4 4 0 0 0 4-4V6a4 4 0 1 0-8 0v5a4 4 0 0 0 4 4Zm6-4a1 1 0 1 1 2 0 8 8 0 0 1-7 7.94V21h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-2.06A8 8 0 0 1 4 11a1 1 0 1 1 2 0 6 6 0 0 0 12 0Z" />

@@ -19,7 +19,7 @@ export function createApi({ hub, auth, decider }: ApiDeps): Router {
   api.get("/health", async (_req, res) => {
     const def = hub.defaultId;
     const session = def ? hub.get(def) : undefined;
-    res.json({ ok: true, jev: { enabled: decider.enabled, model: decider.model }, url: session?.executor.url ?? null, sessions: (await hub.statuses()).map((s) => s.id) });
+    res.json({ ok: true, paused: hub.paused, jev: { enabled: decider.enabled, model: decider.model }, url: session?.executor.url ?? null, sessions: (await hub.statuses()).map((s) => s.id) });
   });
 
   api.use(auth.bearer);
@@ -35,17 +35,30 @@ export function createApi({ hub, auth, decider }: ApiDeps): Router {
   };
 
   api.get("/sessions", async (_req, res) => {
-    res.json({ default: hub.defaultId, sessions: await hub.statuses() });
+    res.json({ default: hub.defaultId, paused: hub.paused, sessions: await hub.statuses() });
   });
 
   /** Browser/Mac only: the brain's own jev_browse tool comes through here, so a command must
    *  never bounce back into the brain. Use /ask for that. */
+  const PAUSED = "Jev is paused: the user switched the assistant off. Nothing runs on this Mac until they resume it.";
+  const paused = (res: Response): boolean => {
+    if (!hub.paused) return false;
+    res.status(409).json({ error: PAUSED });
+    return true;
+  };
+
   api.post("/command", async (req, res) => {
     const { text, session: id } = (req.body ?? {}) as { text?: unknown; session?: unknown };
     if (typeof text !== "string" || !text.trim()) return void res.status(400).json({ error: "text is required" });
+    if (paused(res)) return;
     const session = resolve(res, id);
     if (!session) return;
     res.json(await session.command(text, { local: true }));
+  });
+
+  api.post("/pause", (req, res) => {
+    hub.setPaused(!!(req.body ?? {}).paused);
+    res.json({ ok: true, paused: hub.paused });
   });
 
   api.post("/reply", async (req, res) => {
@@ -61,6 +74,7 @@ export function createApi({ hub, auth, decider }: ApiDeps): Router {
   api.post("/ask", async (req, res) => {
     const { text, session: id } = (req.body ?? {}) as { text?: unknown; session?: unknown };
     if (typeof text !== "string" || !text.trim()) return void res.status(400).json({ error: "text is required" });
+    if (paused(res)) return;
     const session = resolve(res, id);
     if (!session) return;
     res.json(await session.ask(text));
