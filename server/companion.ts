@@ -17,8 +17,6 @@ import type { RemoteExecutor } from "./executors/remote.js";
 import { demoPage } from "./demo.js";
 import { createApi } from "./http.js";
 import { Hub } from "./hub.js";
-import { attachSttRelay } from "./stt/relay.js";
-import type { SttProvider } from "./stt/types.js";
 
 export interface CompanionOptions {
   decider: Decider;
@@ -29,8 +27,6 @@ export interface CompanionOptions {
   defaultSession?: string;
   /** Extra origins allowed to open UI sockets (e.g. "chrome-extension://*"). */
   extraOrigins?: string[];
-  /** Streaming speech-to-text for /ws/stt; without one, UIs fall back to Web Speech. */
-  stt?: SttProvider | null;
   /** Reads replies to voice commands aloud. */
   speaker?: Speaker | null;
   /** The agent behind the `hermes` route (Hermes); without one such commands stay local. */
@@ -56,7 +52,6 @@ export function createCompanion(opts: CompanionOptions): Companion {
     decider: opts.decider,
     screenshotIntervalMs: opts.screenshotIntervalMs ?? 700,
     defaultSession: opts.defaultSession,
-    sttProvider: opts.stt?.name ?? null,
     speaker: opts.speaker,
     brain: opts.brain,
     computer: opts.computer,
@@ -77,7 +72,6 @@ export function createCompanion(opts: CompanionOptions): Companion {
   app.use("/api", createApi({ hub, auth, decider: opts.decider }));
 
   const wss = new WebSocketServer({ noServer: true });
-  const sttWss = new WebSocketServer({ noServer: true });
   const bridgeWss = new WebSocketServer({ noServer: true });
   let origins = allowedOrigins(0, opts.extraOrigins);
 
@@ -87,14 +81,6 @@ export function createCompanion(opts: CompanionOptions): Companion {
     const bridge = opts.bridge;
     if (!bridge) return ws.close(1013, "no Chrome bridge configured");
     bridge.attach(ws);
-  });
-
-  sttWss.on("connection", (ws: WebSocket) => {
-    if (!opts.stt) return ws.close(1013, "no speech-to-text provider configured");
-    // Apple's speechFinal is always false now (see server/stt/apple.ts), so this gap is the only
-    // auto-flush left besides an explicit stop — long on purpose, so a mid-thought pause during
-    // dictation never dispatches early. Tunable without a rebuild while we dial it in.
-    attachSttRelay(ws, { provider: opts.stt, gapMs: Number(process.env.STT_GAP_MS) || 15000 });
   });
 
   wss.on("connection", (ws: WebSocket) => {
@@ -155,7 +141,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
     const server = http.createServer(app);
     server.on("upgrade", (req, socket, head) => {
       const pathname = req.url?.split("?")[0];
-      const target = pathname === "/ws" ? wss : pathname === "/ws/stt" ? sttWss : pathname === "/ws/bridge" ? bridgeWss : null;
+      const target = pathname === "/ws" ? wss : pathname === "/ws/bridge" ? bridgeWss : null;
       if (!target) return socket.destroy();
       const allowed = target === bridgeWss ? tokenPresented(req, auth) : socketAllowed(req, auth, origins);
       if (!allowed) {
@@ -198,7 +184,6 @@ export function createCompanion(opts: CompanionOptions): Companion {
     },
     async close() {
       for (const ws of wss.clients) ws.terminate();
-      for (const ws of sttWss.clients) ws.terminate();
       for (const ws of bridgeWss.clients) ws.terminate();
       await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
       await hub.close();

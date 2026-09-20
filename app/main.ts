@@ -2,7 +2,7 @@
  *  in-process. ⌥Space shows the panel and starts listening; the tray shows what it is doing. */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, Menu, Tray, app, globalShortcut, ipcMain, nativeImage, screen, session, systemPreferences } from "electron";
+import { BrowserWindow, Menu, Tray, app, globalShortcut, ipcMain, nativeImage, screen } from "electron";
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "../server/companion.js";
 import { selectComputer } from "../server/computer.js";
@@ -13,7 +13,6 @@ import { selectMac } from "../server/executors/mac.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { RemoteExecutor } from "../server/executors/remote.js";
 import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
-import { selectSttProvider } from "../server/stt/select.js";
 import { type PanelState, onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
 import { trayIconPng } from "./tray-icon.js";
 
@@ -107,7 +106,7 @@ function createWindow(): BrowserWindow {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      additionalArguments: [`--jev-base-url=${baseUrl}`, ...(process.env.JEV_AUTOLISTEN ? ["--jev-autolisten"] : [])],
+      additionalArguments: [`--jev-base-url=${baseUrl}`],
     },
   });
   // renderer console → our stdout, so `electron .` logs tell the whole story
@@ -142,16 +141,7 @@ async function main() {
   await app.whenReady();
   if (process.platform === "darwin") app.dock?.hide();
 
-  // The renderer captures the mic; ask up front (without blocking startup on the dialog) so the
-  // first ⌥Space is not a permission prompt.
-  if (process.platform === "darwin") {
-    const status = systemPreferences.getMediaAccessStatus("microphone");
-    console.log(`microphone access: ${status}`);
-    if (status !== "granted") void systemPreferences.askForMediaAccess("microphone").then((ok) => console.log(`microphone access: ${ok ? "granted" : "denied"}`));
-  }
-
   const decider = createDecider();
-  const stt = selectSttProvider(process.env, { appleBin: path.join(root, "native", "jev-speech", "jev-speech") });
   const speaker = selectSpeaker();
   const brain = createBrain();
   const computer = selectComputer();
@@ -167,7 +157,6 @@ async function main() {
     token: process.env.JEV_TOKEN,
     clientDir: path.join(root, "dist", "client"),
     defaultSession: process.env.JEV_DEFAULT_SESSION,
-    stt,
     speaker,
     brain,
     computer,
@@ -197,20 +186,6 @@ async function main() {
   if (front) void front.start().then(() => console.log(mac!.ready ? "mac: cua-driver ready — acting in the app in front" : "mac: cua-driver not answering — Mac apps off (run hermes computer-use doctor)"));
   else console.log("mac: off");
 
-  // Only our own renderer gets the microphone.
-  if (!process.env.JEV_DEBUG_NO_PERM) {
-    session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
-      const ok = permission === "media" && wc.getURL().startsWith(baseUrl);
-      console.log(`permission request: ${permission} ${JSON.stringify(details)} → ${ok}`);
-      callback(ok);
-    });
-    session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => {
-      const ok = permission === "media" && origin.startsWith(baseUrl);
-      console.log(`permission check: ${permission} ${origin} → ${ok}`);
-      return ok;
-    });
-  }
-
   win = createWindow();
   tray = new Tray(icon("idle"));
   setPaused = (paused) => companion.hub.setPaused(paused);
@@ -225,7 +200,7 @@ async function main() {
       { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects), enabled: !panel.paused },
       { label: panel.paused ? "Resume Jev" : "Pause Jev (off: hears, says and does nothing)", click: () => setPaused(!panel.paused) },
       { type: "separator" },
-      { label: `Voice in: ${stt ? stt.name : "browser speech"} · out: ${describeSpeaker(speaker)}`, enabled: false },
+      { label: `Voice out: ${describeSpeaker(speaker)}`, enabled: false },
       { label: `Jev: ${decider.enabled ? decider.model : "heuristics"}`, enabled: false },
       { type: "separator" },
       { label: "Quit Jev", click: () => app.quit() },
@@ -246,7 +221,7 @@ async function main() {
     console.error(`Could not register the ${HOTKEY} hotkey; use the tray menu.`);
   }
   showPanel();
-  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice in: ${stt?.name ?? "web speech"}  out: ${describeSpeaker(speaker)}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
+  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice out: ${describeSpeaker(speaker)}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
 
   app.on("before-quit", () => {
     quitting = true;

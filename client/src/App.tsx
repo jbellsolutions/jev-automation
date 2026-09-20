@@ -6,10 +6,8 @@ import { ConfirmCard } from "./components/ConfirmCard.tsx";
 import { DecisionLog } from "./components/DecisionLog.tsx";
 import { Help } from "./components/Help.tsx";
 import { LiveView } from "./components/LiveView.tsx";
-import { MicButton } from "./components/MicButton.tsx";
 import { TopBar } from "./components/TopBar.tsx";
 import { useSocket } from "./hooks/useSocket.ts";
-import { useVoice } from "./hooks/useVoice.ts";
 import { initialState, reducer } from "./state.ts";
 import { detectTransport } from "./transport.ts";
 
@@ -37,66 +35,28 @@ export function App() {
   }, [send]);
   const setPaused = useCallback((p: boolean) => send({ type: "pause", paused: p }), [send]);
   const busy = state.status.level === "busy" || state.entries.some((e) => e.brain?.state === "running" || e.brain?.state === "waiting");
-  const speech = useVoice({
-    transport,
-    sttProvider: state.stt,
-    muted: speaking,
-    onUtterance: (text) => {
-      console.log(`[voice] heard: ${text}`);
-      command(text, "voice");
-    },
-  });
   const desktop = transport.mode === "desktop";
 
-  // Desktop shell: the global hotkey drives the microphone, the tray mirrors its state, Escape hides the panel.
+  // Desktop shell: the hotkey shows/focuses the panel; Escape interrupts a spoken reply, else hides.
   useEffect(() => {
     if (!desktop) return;
     document.body.classList.add("desktop");
     const bridge = window.jev;
-    const offToggle = bridge?.onToggleListening?.(() => speech.toggle());
-    const offStop = bridge?.onStopListening?.(() => speech.stop());
     const offInterrupt = bridge?.onInterrupt?.(() => interrupt());
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (speaking) interrupt();
-      else (speech.listening ? speech.stop : bridge?.hide)?.();
+      else bridge?.hide?.();
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      offToggle?.();
-      offStop?.();
       offInterrupt?.();
       window.removeEventListener("keydown", onKey);
     };
-  }, [desktop, speech.toggle, speech.stop, speech.listening, speaking, interrupt]);
-  useEffect(() => {
-    if (desktop) window.jev?.setListening?.(speech.listening);
-  }, [desktop, speech.listening]);
+  }, [desktop, speaking, interrupt]);
   useEffect(() => {
     if (desktop) window.jev?.setSpeaking?.(speaking);
   }, [desktop, speaking]);
-  // paused: the microphone goes quiet too (the shell also asks, but the web build has only this)
-  useEffect(() => {
-    if (paused && speech.listening) speech.stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused]);
-  useEffect(() => {
-    if (desktop && window.jev?.autoListen && state.jev && !speech.listening) {
-      console.log("[voice] auto-listen: starting");
-      speech.start();
-    }
-    // once, when the companion has said hello
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [desktop, state.jev !== null]);
-  useEffect(() => {
-    if (speech.error) console.error(`[voice] ${speech.error}`);
-  }, [speech.error]);
-  useEffect(() => {
-    if (speech.listening)
-      console.log(
-        `[voice] listening via ${speech.engine}${speech.provider ? ` (${speech.provider})` : ""}`,
-      );
-  }, [speech.listening, speech.engine, speech.provider]);
 
   return (
     <>
@@ -118,7 +78,6 @@ export function App() {
           fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
         />
         <aside className="control-pane">
-          <MicButton speech={speech} speaking={speaking} paused={paused} onInterrupt={interrupt} onResume={() => { setPaused(false); speech.start(); }} />
           <CommandInput onSubmit={(t) => command(t, "text")} />
           {state.pending?.kind === "confirm" && (
             <ConfirmCard

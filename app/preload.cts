@@ -7,21 +7,6 @@ const baseUrl = process.argv.find((a) => a.startsWith("--jev-base-url="))?.slice
 contextBridge.exposeInMainWorld("jev", {
   mode: "desktop",
   baseUrl,
-  /** Start listening as soon as the companion says hello (JEV_AUTOLISTEN=1, for smoke tests). */
-  autoListen: process.argv.includes("--jev-autolisten"),
-  onToggleListening(cb: () => void): () => void {
-    const handler = () => cb();
-    ipcRenderer.on("jev:toggle-listening", handler);
-    return () => ipcRenderer.off("jev:toggle-listening", handler);
-  },
-  onStopListening(cb: () => void): () => void {
-    const handler = () => cb();
-    ipcRenderer.on("jev:stop-listening", handler);
-    return () => ipcRenderer.off("jev:stop-listening", handler);
-  },
-  setListening(listening: boolean): void {
-    ipcRenderer.send("jev:listening", listening);
-  },
   onInterrupt(cb: () => void): () => void {
     const handler = () => cb();
     ipcRenderer.on("jev:interrupt", handler);

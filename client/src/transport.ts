@@ -5,12 +5,6 @@ export interface DesktopBridge {
   mode: "desktop";
   /** e.g. "http://127.0.0.1:3111" */
   baseUrl: string;
-  autoListen?: boolean;
-  /** The global hotkey fired: toggle the microphone. Returns an unsubscribe. */
-  onToggleListening?(cb: () => void): () => void;
-  onStopListening?(cb: () => void): () => void;
-  /** Tell the shell what the microphone is doing (tray icon, hotkey state). */
-  setListening?(listening: boolean): void;
   /** The hotkey fired while the assistant was talking: cut it off. */
   onInterrupt?(cb: () => void): () => void;
   setSpeaking?(speaking: boolean): void;
@@ -20,7 +14,7 @@ export interface DesktopBridge {
 
 export interface Transport {
   mode: "web" | "desktop";
-  /** ws(s):// URL for a socket path such as "/ws" or "/ws/stt". */
+  /** ws(s):// URL for a socket path such as "/ws" or "/ws/bridge". */
   wsUrl(path: string): string;
 }
 

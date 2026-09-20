@@ -40,8 +40,6 @@ export type Approval = { runId: string; question: string; choices: ApprovalChoic
 export interface State {
   connected: boolean;
   jev: { enabled: boolean; model: string | null } | null;
-  /** Streaming STT provider announced by the server, or null for Web Speech. */
-  stt: string | null;
   /** The assistant is currently talking. */
   speaking: boolean;
   /** Switched off: nothing is heard, said or done until resumed. */
@@ -59,7 +57,6 @@ export type Event = ServerMessage | { type: "socket"; connected: boolean } | { t
 export const initialState: State = {
   connected: false,
   jev: null,
-  stt: null,
   speaking: false,
   paused: false,
   viewport: { width: 1280, height: 800 },
@@ -162,7 +159,7 @@ export function reducer(state: State, ev: Event): State {
     case "socket":
       return { ...state, connected: ev.connected, status: ev.connected ? { text: "Connected", level: "ok" } : { text: "Disconnected — retrying…", level: "warn" } };
     case "hello":
-      return { ...state, jev: ev.jev, viewport: ev.viewport, stt: ev.stt?.provider ?? null, paused: !!ev.paused };
+      return { ...state, jev: ev.jev, viewport: ev.viewport, paused: !!ev.paused };
     case "speaking":
       return { ...state, speaking: ev.active };
     case "paused":

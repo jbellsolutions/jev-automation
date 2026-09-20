@@ -5,7 +5,7 @@ describe("detectTransport", () => {
   it("uses the serving host on the web", () => {
     const t = detectTransport({ location: { protocol: "http:", host: "localhost:3000" } as Location });
     expect(t.mode).toBe("web");
-    expect(t.wsUrl("/ws/stt")).toBe("ws://localhost:3000/ws/stt");
+    expect(t.wsUrl("/ws")).toBe("ws://localhost:3000/ws");
   });
 
   it("uses the preload bridge on the desktop", () => {
