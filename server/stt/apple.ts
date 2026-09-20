@@ -75,7 +75,11 @@ export class AppleSpeechProvider implements SttProvider {
             onEvent({ type: "open" });
             break;
           case "transcript":
-            onEvent({ type: "transcript", text: msg.text ?? "", final: !!msg.final, speechFinal: !!msg.final });
+            // msg.final marks the native helper's own ~700ms silence-based request recycle, not the
+            // user finishing their turn — treating it as speechFinal was dispatching every pause as a
+            // separate command. speechFinal stays false; the explicit stop (relay's finish()) or the
+            // relay's own gap tick is what ends an utterance now.
+            onEvent({ type: "transcript", text: msg.text ?? "", final: !!msg.final, speechFinal: false });
             break;
           case "permission":
             onEvent({ type: "error", message: "Allow speech recognition for jev-speech in the system prompt to use on-device voice." });

@@ -56,7 +56,7 @@ export function LiveView({ page, status, connected, send, fixedViewport }: Props
         {page.frame ? (
           <img id="screen" src={page.frame} alt="Live view of the controlled browser" draggable={false} onClick={onClick} />
         ) : (
-          <div className="overlay">Waiting for the browser…</div>
+          <div className="overlay">Waiting for the screen…</div>
         )}
       </div>
       <div id="status" className={`status ${status.level}`}>{status.text}</div>

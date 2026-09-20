@@ -49,7 +49,9 @@ describe("AppleSpeechProvider", () => {
     expect(events).toEqual([
       { type: "open" },
       { type: "transcript", text: "open wiki", final: false, speechFinal: false },
-      { type: "transcript", text: "Open Wikipedia.", final: true, speechFinal: true },
+      // final:true is the helper's own ~700ms segment recycle, not the user's turn ending —
+      // speechFinal stays false so the relay doesn't dispatch mid-dictation pauses as commands.
+      { type: "transcript", text: "Open Wikipedia.", final: true, speechFinal: false },
     ]);
     stream.send(new Uint8Array([1, 2, 3]));
     await new Promise((r) => setTimeout(r, 10));

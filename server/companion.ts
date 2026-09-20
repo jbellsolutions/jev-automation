@@ -91,7 +91,10 @@ export function createCompanion(opts: CompanionOptions): Companion {
 
   sttWss.on("connection", (ws: WebSocket) => {
     if (!opts.stt) return ws.close(1013, "no speech-to-text provider configured");
-    attachSttRelay(ws, { provider: opts.stt });
+    // Apple's speechFinal is always false now (see server/stt/apple.ts), so this gap is the only
+    // auto-flush left besides an explicit stop — long on purpose, so a mid-thought pause during
+    // dictation never dispatches early. Tunable without a rebuild while we dial it in.
+    attachSttRelay(ws, { provider: opts.stt, gapMs: Number(process.env.STT_GAP_MS) || 15000 });
   });
 
   wss.on("connection", (ws: WebSocket) => {
