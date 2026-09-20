@@ -1,5 +1,5 @@
-/** A menu-bar template icon drawn in code (no binary assets): a filled circle, hollow while
- *  idle and solid while listening. PNG is written by hand — RGBA, no filters, one zlib stream. */
+/** A menu-bar template icon drawn in code (no binary assets): a ring, thinner while busy.
+ *  PNG is written by hand — RGBA, no filters, one zlib stream. */
 import { deflateSync } from "node:zlib";
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
@@ -37,21 +37,21 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Buff
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array(0))]);
 }
 
-export type TrayKind = "idle" | "listening" | "busy" | "paused";
+export type TrayKind = "idle" | "busy" | "paused";
 
-/** Alpha coverage of the icon, row-major: a ring when idle, a disc when listening, a thick ring
- *  when busy, a faint ring with a bar through it (a power-off glyph) when paused. */
+/** Alpha coverage of the icon, row-major: a ring when idle, a thick ring when busy, a faint
+ *  ring with a bar through it (a power-off glyph) when paused. */
 export function trayAlpha(kind: TrayKind, size: number): Uint8Array {
   const alpha = new Uint8Array(size * size);
   const c = (size - 1) / 2;
   const outer = size * 0.42;
-  const inner = kind === "idle" || kind === "paused" ? size * 0.3 : kind === "busy" ? size * 0.18 : 0;
+  const inner = kind === "idle" || kind === "paused" ? size * 0.3 : size * 0.18;
   const barHalf = size * 0.06;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const d = Math.hypot(x - c, y - c);
-      // anti-aliased ring/disc: coverage falls off over one pixel at each edge
-      let cover = Math.max(0, Math.min(1, outer + 0.5 - d)) * (inner > 0 ? Math.max(0, Math.min(1, d - inner + 0.5)) : 1);
+      // anti-aliased ring: coverage falls off over one pixel at each edge
+      let cover = Math.max(0, Math.min(1, outer + 0.5 - d)) * Math.max(0, Math.min(1, d - inner + 0.5));
       if (kind === "paused") {
         cover *= 0.45; // dimmed ring…
         const bar = Math.max(0, Math.min(1, barHalf + 0.5 - Math.abs(x - c))) * (y >= c - outer && y <= c ? 1 : 0);

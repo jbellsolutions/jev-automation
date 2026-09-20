@@ -1,47 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "../app/hotkey.js";
+import { onEscape, onHotkey, onPaused, onRendererBusy, onWindowVisibility } from "../app/hotkey.js";
 import { encodePng, trayAlpha, trayIconPng } from "../app/tray-icon.js";
 
 describe("panel hotkey state machine", () => {
-  it("hidden → show and listen; visible idle → listen; listening → stop", () => {
-    const a = onHotkey({ visible: false, listening: false });
-    expect(a).toEqual({ state: { visible: true, listening: true }, effects: ["show", "focus", "start_listening"] });
-    const b = onHotkey({ visible: true, listening: false });
-    expect(b).toEqual({ state: { visible: true, listening: true }, effects: ["focus", "start_listening"] });
-    const c = onHotkey({ visible: true, listening: true });
-    expect(c).toEqual({ state: { visible: true, listening: false }, effects: ["stop_listening"] });
+  it("⌥Space always shows and focuses; it never hides an already-visible panel", () => {
+    expect(onHotkey({ visible: false, busy: false })).toEqual({ state: { visible: true, busy: false }, effects: ["show", "focus"] });
+    expect(onHotkey({ visible: true, busy: false })).toEqual({ state: { visible: true, busy: false }, effects: ["focus"] });
+    expect(onHotkey({ visible: true, busy: true })).toEqual({ state: { visible: true, busy: true }, effects: ["focus"] });
   });
 
-  it("escape stops listening first, then hides", () => {
-    expect(onEscape({ visible: true, listening: true })).toEqual({ state: { visible: true, listening: false }, effects: ["stop_listening"] });
-    expect(onEscape({ visible: true, listening: false })).toEqual({ state: { visible: false, listening: false }, effects: ["hide"] });
-    expect(onEscape({ visible: false, listening: false }).effects).toEqual([]);
+  it("escape cancels while busy (stays open), else hides", () => {
+    expect(onEscape({ visible: true, busy: true })).toEqual({ state: { visible: true, busy: true }, effects: ["cancel"] });
+    expect(onEscape({ visible: true, busy: false })).toEqual({ state: { visible: false, busy: false }, effects: ["hide"] });
+    expect(onEscape({ visible: false, busy: false }).effects).toEqual([]);
   });
 
-  it("while the assistant talks, the hotkey cuts it off first and keeps (or starts) listening", () => {
-    expect(onHotkey({ visible: true, listening: true, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt"] });
-    expect(onHotkey({ visible: true, listening: false, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt", "focus", "start_listening"] });
-    expect(onHotkey({ visible: false, listening: false, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt", "show", "focus", "start_listening"] });
-    expect(onEscape({ visible: true, listening: true, speaking: true })).toEqual({ state: { visible: true, listening: true, speaking: false }, effects: ["interrupt"] });
-    expect(onRendererSpeaking({ visible: true, listening: true }, true)).toEqual({ visible: true, listening: true, speaking: true });
-    const s = { visible: true, listening: true };
-    expect(onRendererSpeaking(s, false)).toBe(s);
-  });
-
-  it("paused: the hotkey resumes and listens; pausing drops listening", () => {
-    expect(onHotkey({ visible: true, listening: false, paused: true })).toEqual({ state: { visible: true, listening: true, speaking: false, paused: false }, effects: ["resume", "focus", "start_listening"] });
-    expect(onHotkey({ visible: false, listening: false, paused: true }).effects).toEqual(["resume", "show", "focus", "start_listening"]);
-    expect(onPaused({ visible: true, listening: true, speaking: true }, true)).toEqual({ visible: true, listening: false, speaking: false, paused: true });
-    const s = { visible: true, listening: false, paused: true };
+  it("paused: the hotkey resumes and shows; pausing drops busy", () => {
+    expect(onHotkey({ visible: true, busy: false, paused: true })).toEqual({ state: { visible: true, busy: false, paused: false }, effects: ["resume", "focus"] });
+    expect(onHotkey({ visible: false, busy: false, paused: true }).effects).toEqual(["resume", "show", "focus"]);
+    expect(onPaused({ visible: true, busy: true }, true)).toEqual({ visible: true, busy: false, paused: true });
+    const s = { visible: true, busy: false, paused: true };
     expect(onPaused(s, true)).toBe(s);
-    expect(onPaused(s, false)).toEqual({ visible: true, listening: false, paused: false });
+    expect(onPaused(s, false)).toEqual({ visible: true, busy: false, paused: false });
   });
 
   it("follows what the renderer and window report", () => {
-    const s = { visible: true, listening: false };
-    expect(onRendererListening(s, true)).toEqual({ visible: true, listening: true });
-    expect(onRendererListening(s, false)).toBe(s);
-    expect(onWindowVisibility(s, false)).toEqual({ visible: false, listening: false });
+    const s = { visible: true, busy: false };
+    expect(onRendererBusy(s, true)).toEqual({ visible: true, busy: true });
+    expect(onRendererBusy(s, false)).toBe(s);
+    expect(onWindowVisibility(s, false)).toEqual({ visible: false, busy: false });
   });
 });
 
@@ -59,7 +46,7 @@ describe("tray icon: paused glyph", () => {
 
 describe("tray icon", () => {
   it("encodes a valid PNG with the right dimensions", () => {
-    const png = trayIconPng("listening", 22);
+    const png = trayIconPng("busy", 22);
     expect(Array.from(png.subarray(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     expect(png.subarray(12, 16).toString("ascii")).toBe("IHDR");
     expect(png.readUInt32BE(16)).toBe(22);
@@ -67,9 +54,9 @@ describe("tray icon", () => {
     expect(png.subarray(png.length - 8, png.length - 4).toString("ascii")).toBe("IEND");
   });
 
-  it("idle is a ring (transparent centre), listening a disc", () => {
+  it("idle and busy are both rings (transparent centre), busy's thicker", () => {
     expect(trayAlpha("idle", 21)[10 * 21 + 10]).toBe(0);
-    expect(trayAlpha("listening", 21)[10 * 21 + 10]).toBe(255);
+    expect(trayAlpha("busy", 21)[10 * 21 + 10]).toBe(0);
     expect(trayAlpha("idle", 21)[10 * 21 + 2]).toBe(255); // on the ring
     expect(trayAlpha("idle", 21)[0]).toBe(0); // corner
     const tiny = encodePng(1, 1, new Uint8Array([0, 0, 0, 255]));

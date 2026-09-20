@@ -7,13 +7,14 @@ const baseUrl = process.argv.find((a) => a.startsWith("--jev-base-url="))?.slice
 contextBridge.exposeInMainWorld("jev", {
   mode: "desktop",
   baseUrl,
-  onInterrupt(cb: () => void): () => void {
+  /** Escape or the busy tray icon asked to cancel the current command/brain run. */
+  onCancel(cb: () => void): () => void {
     const handler = () => cb();
-    ipcRenderer.on("jev:interrupt", handler);
-    return () => ipcRenderer.off("jev:interrupt", handler);
+    ipcRenderer.on("jev:cancel", handler);
+    return () => ipcRenderer.off("jev:cancel", handler);
   },
-  setSpeaking(speaking: boolean): void {
-    ipcRenderer.send("jev:speaking", speaking);
+  setBusy(busy: boolean): void {
+    ipcRenderer.send("jev:busy", busy);
   },
   hide(): void {
     ipcRenderer.send("jev:hide");

@@ -26,7 +26,6 @@ export function App() {
     [send],
   );
   const paused = state.paused;
-  const interrupt = useCallback(() => send({ type: "interrupt" }), [send]);
   /** Stop everything now: the brain run and the browser step. */
   const stopAll = useCallback(() => {
     send({ type: "interrupt" });
@@ -36,22 +35,26 @@ export function App() {
   const busy = state.status.level === "busy" || state.entries.some((e) => e.brain?.state === "running" || e.brain?.state === "waiting");
   const desktop = transport.mode === "desktop";
 
-  // Desktop shell: the hotkey shows/focuses the panel; Escape hides it.
+  // Desktop shell: the hotkey shows/focuses the panel; Escape hides it, or cancels while busy
+  // (the main process decides which, from the busy flag reported below).
   useEffect(() => {
     if (!desktop) return;
     document.body.classList.add("desktop");
     const bridge = window.jev;
-    const offInterrupt = bridge?.onInterrupt?.(() => interrupt());
+    const offCancel = bridge?.onCancel?.(() => stopAll());
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       bridge?.hide?.();
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      offInterrupt?.();
+      offCancel?.();
       window.removeEventListener("keydown", onKey);
     };
-  }, [desktop, interrupt]);
+  }, [desktop, stopAll]);
+  useEffect(() => {
+    if (desktop) window.jev?.setBusy?.(busy);
+  }, [desktop, busy]);
 
   return (
     <>

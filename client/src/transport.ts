@@ -5,10 +5,10 @@ export interface DesktopBridge {
   mode: "desktop";
   /** e.g. "http://127.0.0.1:3111" */
   baseUrl: string;
-  /** The hotkey fired while the assistant was talking: cut it off. */
-  onInterrupt?(cb: () => void): () => void;
-  setSpeaking?(speaking: boolean): void;
-  /** Tuck the panel away. */
+  /** Escape fired while a command/brain run was in flight: cancel it, stay open. */
+  onCancel?(cb: () => void): () => void;
+  setBusy?(busy: boolean): void;
+  /** Tuck the panel away (or, if busy, ask to cancel instead — the main process decides). */
   hide?(): void;
 }
 

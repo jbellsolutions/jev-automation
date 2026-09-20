@@ -1,5 +1,5 @@
 /** The Jev desktop face: a floating always-on-top panel over the same companion the CLI runs,
- *  in-process. ⌥Space shows the panel and starts listening; the tray shows what it is doing. */
+ *  in-process. ⌥Space shows and focuses the panel; the tray shows what it is doing. */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, Menu, Tray, app, globalShortcut, ipcMain, nativeImage, screen } from "electron";
@@ -12,7 +12,7 @@ import { FrontExecutor } from "../server/executors/front.js";
 import { selectMac } from "../server/executors/mac.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { RemoteExecutor } from "../server/executors/remote.js";
-import { type PanelState, onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
+import { type PanelState, onEscape, onHotkey, onPaused, onRendererBusy, onWindowVisibility } from "./hotkey.js";
 import { trayIconPng } from "./tray-icon.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/app
@@ -25,15 +25,27 @@ const PANEL = { width: 440, height: 720 };
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let panel: PanelState = { visible: false, listening: false };
+let panel: PanelState = { visible: false, busy: false };
 let baseUrl = "";
 
 let buildTrayMenu: () => Menu = () => Menu.buildFromTemplate([]);
 
-function icon(kind: "idle" | "listening" | "busy" | "paused") {
+function icon(kind: "idle" | "busy" | "paused") {
   const img = nativeImage.createFromBuffer(trayIconPng(kind, 44), { scaleFactor: 2 });
   img.setTemplateImage(true);
   return img;
+}
+
+function runHotkey() {
+  const { state, effects } = onHotkey(panel);
+  panel = state;
+  applyEffects(effects);
+}
+
+function runEscape() {
+  const { state, effects } = onEscape(panel);
+  panel = state;
+  applyEffects(effects);
 }
 
 function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
@@ -48,14 +60,9 @@ function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
       case "focus":
         win?.focus();
         break;
-      case "start_listening":
-      case "stop_listening":
-        // the renderer owns the microphone; it toggles and reports back through jev:listening
-        win?.webContents.send(e === "start_listening" ? "jev:toggle-listening" : "jev:stop-listening");
-        break;
-      case "interrupt":
-        // the renderer holds the companion socket; it asks the session to stop talking
-        win?.webContents.send("jev:interrupt");
+      case "cancel":
+        // the renderer holds the companion socket; it stops the current run and sends "stop"
+        win?.webContents.send("jev:cancel");
         break;
       case "resume":
         setPaused(false);
@@ -68,8 +75,8 @@ function applyEffects(effects: ReturnType<typeof onHotkey>["effects"]) {
 let setPaused: (paused: boolean) => void = () => {};
 
 function refreshTray() {
-  tray?.setImage(icon(panel.paused ? "paused" : panel.listening ? "listening" : "idle"));
-  tray?.setToolTip(panel.paused ? "Jev — paused (⌥Space or the menu to resume)" : panel.listening ? "Jev — listening (⌥Space or Esc to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to talk`);
+  tray?.setImage(icon(panel.paused ? "paused" : panel.busy ? "busy" : "idle"));
+  tray?.setToolTip(panel.paused ? "Jev — paused (⌥Space or the menu to resume)" : panel.busy ? "Jev — working (Esc to stop)" : `Jev — ${HOTKEY.replace("Alt", "⌥").replace("+", "")} to show`);
   tray?.setContextMenu(buildTrayMenu());
 }
 
@@ -188,13 +195,11 @@ async function main() {
   setPaused = (paused) => companion.hub.setPaused(paused);
   companion.hub.onPause((paused) => {
     panel = onPaused(panel, paused);
-    if (paused) win?.webContents.send("jev:stop-listening");
     refreshTray();
   });
   buildTrayMenu = () =>
     Menu.buildFromTemplate([
-      { label: "Show Jev", click: () => showPanel() },
-      { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects), enabled: !panel.paused },
+      { label: `Show Jev (${HOTKEY})`, click: () => runHotkey() },
       { label: panel.paused ? "Resume Jev" : "Pause Jev (off: hears, says and does nothing)", click: () => setPaused(!panel.paused) },
       { type: "separator" },
       { label: `Jev: ${decider.enabled ? decider.model : "heuristics"}`, enabled: false },
@@ -204,16 +209,13 @@ async function main() {
   tray.on("click", () => (win?.isVisible() ? win.hide() : showPanel()));
   refreshTray();
 
-  ipcMain.on("jev:listening", (_e, listening: boolean) => {
-    panel = onRendererListening(panel, !!listening);
+  ipcMain.on("jev:busy", (_e, busy: boolean) => {
+    panel = onRendererBusy(panel, !!busy);
     refreshTray();
   });
-  ipcMain.on("jev:speaking", (_e, speaking: boolean) => {
-    panel = onRendererSpeaking(panel, !!speaking);
-  });
-  ipcMain.on("jev:hide", () => applyEffects(onEscape({ ...panel, listening: false, speaking: false }).effects));
+  ipcMain.on("jev:hide", () => runEscape());
 
-  if (!globalShortcut.register(HOTKEY, () => applyEffects(onHotkey(panel).effects))) {
+  if (!globalShortcut.register(HOTKEY, () => runHotkey())) {
     console.error(`Could not register the ${HOTKEY} hotkey; use the tray menu.`);
   }
   showPanel();
