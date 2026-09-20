@@ -9,7 +9,6 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { Brain } from "../core/brain.js";
 import type { Decider } from "../core/decide.js";
 import type { Executor } from "../core/executor.js";
-import type { Speaker } from "../core/speak.js";
 import type { ClientMessage, ServerMessage } from "../core/protocol.js";
 import type { Computer } from "../core/session.js";
 import { type Auth, allowedOrigins, createAuth, socketAllowed, tokenPresented } from "./auth.js";
@@ -27,8 +26,6 @@ export interface CompanionOptions {
   defaultSession?: string;
   /** Extra origins allowed to open UI sockets (e.g. "chrome-extension://*"). */
   extraOrigins?: string[];
-  /** Reads replies to voice commands aloud. */
-  speaker?: Speaker | null;
   /** The agent behind the `hermes` route (Hermes); without one such commands stay local. */
   brain?: Brain | null;
   /** The Mac lane (open apps); without one "open slack" goes to the brain or is refused. */
@@ -52,7 +49,6 @@ export function createCompanion(opts: CompanionOptions): Companion {
     decider: opts.decider,
     screenshotIntervalMs: opts.screenshotIntervalMs ?? 700,
     defaultSession: opts.defaultSession,
-    speaker: opts.speaker,
     brain: opts.brain,
     computer: opts.computer,
   });
@@ -105,7 +101,7 @@ export function createCompanion(opts: CompanionOptions): Companion {
             ws.send(JSON.stringify({ type: "status", text: "Jev is paused — resume from the tray, ⌥Space, or the panel", level: "warn" } satisfies ServerMessage));
             break;
           }
-          void session.command(msg.text, { speak: msg.via === "voice" });
+          void session.command(msg.text);
           break;
         case "pause":
           hub.setPaused(!!msg.paused);

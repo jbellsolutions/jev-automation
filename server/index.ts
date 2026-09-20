@@ -10,7 +10,6 @@ import { selectMac } from "./executors/mac.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
 import { RemoteExecutor } from "./executors/remote.js";
 import { createBrain } from "./hermes.js";
-import { describeSpeaker, selectSpeaker } from "./speak/select.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HEADLESS = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
@@ -21,7 +20,6 @@ const JPEG_QUALITY = Number(process.env.JPEG_QUALITY ?? 80);
 const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "client");
 
 const decider = createDecider();
-const speaker = selectSpeaker();
 const brain = createBrain();
 const computer = selectComputer();
 const bridge = new RemoteExecutor({
@@ -35,7 +33,6 @@ const companion = createCompanion({
   token: process.env.JEV_TOKEN,
   clientDir,
   defaultSession: process.env.JEV_DEFAULT_SESSION,
-  speaker,
   brain,
   computer,
   bridge,
@@ -65,7 +62,6 @@ async function main(): Promise<void> {
   console.log(`Jev voice browser → http://localhost:${port}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");
-  console.log(`Voice out: ${describeSpeaker(speaker)}`);
   console.log(companion.auth.configured ? "Chrome: waiting for the bridge extension (load dist/extension unpacked; token = JEV_TOKEN)" : "Chrome: bridge disabled — set JEV_TOKEN");
   if (brain) {
     const h = await brain.health();

@@ -19,25 +19,24 @@ export function App() {
   );
 
   const command = useCallback(
-    (text: string, via: "voice" | "text") => {
+    (text: string) => {
       const trimmed = text.trim();
-      if (trimmed) send({ type: "command", text: trimmed, via });
+      if (trimmed) send({ type: "command", text: trimmed });
     },
     [send],
   );
-  const speaking = state.speaking;
   const paused = state.paused;
   const interrupt = useCallback(() => send({ type: "interrupt" }), [send]);
-  /** Stop everything now: the voice, the browser step, and the Hermes run. */
+  /** Stop everything now: the brain run and the browser step. */
   const stopAll = useCallback(() => {
     send({ type: "interrupt" });
-    send({ type: "command", text: "stop", via: "text" });
+    send({ type: "command", text: "stop" });
   }, [send]);
   const setPaused = useCallback((p: boolean) => send({ type: "pause", paused: p }), [send]);
   const busy = state.status.level === "busy" || state.entries.some((e) => e.brain?.state === "running" || e.brain?.state === "waiting");
   const desktop = transport.mode === "desktop";
 
-  // Desktop shell: the hotkey shows/focuses the panel; Escape interrupts a spoken reply, else hides.
+  // Desktop shell: the hotkey shows/focuses the panel; Escape hides it.
   useEffect(() => {
     if (!desktop) return;
     document.body.classList.add("desktop");
@@ -45,18 +44,14 @@ export function App() {
     const offInterrupt = bridge?.onInterrupt?.(() => interrupt());
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (speaking) interrupt();
-      else bridge?.hide?.();
+      bridge?.hide?.();
     };
     window.addEventListener("keydown", onKey);
     return () => {
       offInterrupt?.();
       window.removeEventListener("keydown", onKey);
     };
-  }, [desktop, speaking, interrupt]);
-  useEffect(() => {
-    if (desktop) window.jev?.setSpeaking?.(speaking);
-  }, [desktop, speaking]);
+  }, [desktop, interrupt]);
 
   return (
     <>
@@ -64,7 +59,7 @@ export function App() {
         jev={state.jev}
         desktop={desktop}
         paused={paused}
-        busy={busy || speaking}
+        busy={busy}
         onStop={stopAll}
         onPause={setPaused}
         onHide={desktop ? () => window.jev?.hide?.() : undefined}
@@ -78,7 +73,7 @@ export function App() {
           fixedViewport={desktop ? { width: 1024, height: 640 } : undefined}
         />
         <aside className="control-pane">
-          <CommandInput onSubmit={(t) => command(t, "text")} />
+          <CommandInput onSubmit={command} />
           {state.pending?.kind === "confirm" && (
             <ConfirmCard
               pending={state.pending}

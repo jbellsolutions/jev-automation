@@ -17,7 +17,6 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build",
     "build:app": "node scripts/build-app.mjs",
-    "voice:test": "node --import tsx scripts/voice-test.mjs",
     "build:extension": "node --import tsx scripts/build-extension.mjs",
     "bridge:smoke": "node --import tsx scripts/bridge-smoke.mjs",
     "app": "npm run build && npm run build:app && electron .",

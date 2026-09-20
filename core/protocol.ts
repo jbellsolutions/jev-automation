@@ -5,7 +5,7 @@ import type { Blocker } from "./verify.js";
 
 /** WebSocket messages, browser UI -> server. */
 export type ClientMessage =
-  | { type: "command"; text: string; via: "voice" | "text" }
+  | { type: "command"; text: string }
   | { type: "confirm_reply"; ok: boolean }
   | { type: "pick"; elementId: string }
   /** Answer to a brain approval request (the agent asked before doing something). */
@@ -40,8 +40,6 @@ export interface DecisionSummary {
 /** WebSocket messages, server -> browser UI. */
 export type ServerMessage =
   | { type: "hello"; jev: { enabled: boolean; model: string | null }; viewport: { width: number; height: number }; paused?: boolean }
-  /** The assistant is talking (or stopped); UIs mute the microphone meanwhile so it does not hear itself. */
-  | { type: "speaking"; active: boolean }
   /** Jev is switched off (or back on): nothing is heard, said or done while paused — every UI
    *  and every API caller sees the same switch. */
   | { type: "paused"; paused: boolean }

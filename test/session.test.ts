@@ -332,17 +332,9 @@ describe("Session: held actions are verified too", () => {
 });
 
 describe("Session: brain lane (Hermes)", () => {
-  class FakeSpeaker {
-    said: string[] = [];
-    stopped = 0;
-    maxChars?: number;
-    async speak(text: string) { this.said.push(text); }
-    stop() { this.stopped++; }
-  }
-  function withBrain(opts: { speaker?: boolean; computer?: boolean; files?: Record<string, string[]> } = {}) {
+  function withBrain(opts: { computer?: boolean; files?: Record<string, string[]> } = {}) {
     const executor = new FakeExecutor([el("e0", { text: "Pricing", hrefShort: "/pricing" })]);
     const brain = new FakeBrain();
-    const speaker = opts.speaker ? new FakeSpeaker() : null;
     const opened: string[] = [];
     const computer = opts.computer
       ? {
@@ -352,10 +344,10 @@ describe("Session: brain lane (Hermes)", () => {
         }
       : null;
     const messages: ServerMessage[] = [];
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, computer, retryDelayMs: 1 });
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, computer, retryDelayMs: 1 });
     session.subscribe((m) => messages.push(m));
     const brainEvents = () => messages.filter((m): m is Extract<ServerMessage, { type: "brain_event" }> => m.type === "brain_event").map((m) => m.event.kind);
-    return { executor, brain, speaker, opened, session, messages, brainEvents };
+    return { executor, brain, opened, session, messages, brainEvents };
   }
 
   it("sends a question to the brain in one piece and streams its events outside the queue", async () => {
@@ -380,24 +372,14 @@ describe("Session: brain lane (Hermes)", () => {
     expect(ev).toMatchObject({ stepId: r.steps[0]!.stepId, runId: "run_1" });
   });
 
-  it("speaks an acknowledgement and the final answer when the command came by voice", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
-    await session.command("what's on my calendar today", { speak: true });
-    expect(speaker!.said).toEqual(["On it."]);
-    brain.emit("run_1", { kind: "delta", text: "Two meetings" }, { kind: "completed", output: "**Two meetings**: standup at 9 and lunch with Sam at noon." }, null);
-    await tick();
-    expect(speaker!.said.at(-1)).toBe("Two meetings: standup at 9 and lunch with Sam at noon.");
-  });
-
-  it("asks the human when the brain wants approval, and a spoken yes/no answers it", async () => {
-    const { session, brain, speaker, messages } = withBrain({ speaker: true });
-    await session.command("clean up my downloads folder", { speak: true });
+  it("asks the human when the brain wants approval; a typed yes/no answers it", async () => {
+    const { session, brain, messages } = withBrain();
+    await session.command("clean up my downloads folder");
     brain.emit("run_1", { kind: "approval", requestId: "req1", summary: "run rm -rf ~/Downloads/*", choices: ["once", "session", "always", "deny"] });
     await tick();
     expect(session.pendingSummary()).toEqual({ kind: "approval", question: "Hermes wants to run rm -rf ~/Downloads/*. Allow it?", choices: ["once", "session", "always", "deny"] });
-    expect(speaker!.said.at(-1)).toBe("Hermes wants to run rm -rf ~/Downloads/. Allow it?"); // markdown-ish glyphs are not read aloud
     expect((await session.status()).pending?.kind).toBe("approval");
-    const r = await session.command("yes, always", { speak: true });
+    const r = await session.command("yes, always");
     expect(brain.approvals).toEqual([{ runId: "run_1", choice: "always", requestId: "req1" }]);
     expect(r.steps[0]!.result).toEqual({ text: "Allowed: run rm -rf ~/Downloads/*", level: "ok" });
     await tick();
@@ -405,7 +387,7 @@ describe("Session: brain lane (Hermes)", () => {
     expect(messages.filter((m) => m.type === "brain_event").map((m) => (m as { event: { kind: string } }).event.kind)).toEqual(["approval", "approved"]);
   });
 
-  it("a spoken no denies; a UI choice works too; an unrelated command leaves the request open", async () => {
+  it("a typed no denies; a UI choice works too; an unrelated command leaves the request open", async () => {
     const { session, brain, executor } = withBrain();
     await session.command("tidy up");
     brain.emit("run_1", { kind: "approval", requestId: null, summary: "delete old logs", choices: ["once", "deny"] });
@@ -423,16 +405,22 @@ describe("Session: brain lane (Hermes)", () => {
   });
 
   it("stop halts the brain run as well as local work; cancel() too", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
+    const { session, brain } = withBrain();
     await session.command("research quantum computing for me");
-    const r = await session.command("stop", { speak: true });
+    const r = await session.command("stop");
     expect(r.steps[0]!.result).toEqual({ text: "Stopped", level: "ok" });
     expect(brain.stops).toEqual(["run_1"]);
     await tick();
     await session.command("write me a poem");
     session.cancel();
     expect(brain.stops).toEqual(["run_1", "run_2"]);
-    expect(speaker!.stopped).toBeGreaterThan(0);
+  });
+
+  it("interrupt() cancels the current brain run only", async () => {
+    const { session, brain } = withBrain();
+    await session.command("research quantum computing for me");
+    session.interrupt();
+    expect(brain.stops).toEqual(["run_1"]);
   });
 
   it("a second brain-bound utterance while a run is active steers it", async () => {
@@ -507,20 +495,19 @@ describe("Session: brain lane (Hermes)", () => {
     brain.emit("run_2", { kind: "completed", output: "Sorry?" }, null);
   });
 
-  it("'new conversation' resets the brain and says so", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
-    await session.command("what's on my calendar today", { speak: true });
-    const r = await session.command("start a new conversation", { speak: true });
+  it("'new conversation' resets the brain", async () => {
+    const { session, brain } = withBrain();
+    await session.command("what's on my calendar today");
+    const r = await session.command("start a new conversation");
     expect(brain.stops).toEqual(["run_1"]);
     expect(brain.resets).toBe(1);
     expect(r.steps[0]!.result).toEqual({ text: "Hermes: fresh conversation", level: "ok" });
-    expect(speaker!.said.at(-1)).toBe("Okay, fresh start.");
     expect(brain.sent).toEqual(["what's on my calendar today"]);
   });
 
   it("a model error before any tool ran is retried on the same conversation, then a fresh one", async () => {
-    const { session, brain, speaker, brainEvents } = withBrain({ speaker: true });
-    const asked = session.ask("what's the weather", { speak: true });
+    const { session, brain, brainEvents } = withBrain();
+    const asked = session.ask("what's the weather");
     await tick();
     brain.emit("run_1", { kind: "failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request", modelError: true }, null);
     await waitFor(() => brain.sent.length === 2);
@@ -533,12 +520,11 @@ describe("Session: brain lane (Hermes)", () => {
     const r = await asked;
     expect(r).toMatchObject({ ok: true, output: "Sunny, 72." });
     expect(brainEvents()).toEqual(["failed", "retrying", "failed", "retrying", "completed"]);
-    expect(speaker!.said).toEqual(["On it.", "Sunny, 72."]);
   });
 
   it("gives up after the third model error and says so", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
-    const asked = session.ask("what's the weather", { speak: true });
+    const { session, brain } = withBrain();
+    const asked = session.ask("what's the weather");
     await tick();
     for (const id of ["run_1", "run_2", "run_3"]) {
       brain.emit(id, { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
@@ -548,12 +534,11 @@ describe("Session: brain lane (Hermes)", () => {
     expect(r.ok).toBe(false);
     expect(r.output).toBe("Hermes's model keeps erroring, even in a fresh conversation. Give it a moment and say it again.");
     expect(brain.resets).toBe(1); // the fresh retry; the conversation is new already, no second rotation
-    expect(speaker!.said.at(-1)).toBe(r.output);
   });
 
   it("a model error after a tool ran is not re-sent; two in a row rotate the conversation", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
-    const first = session.ask("leave a note for xander in slack", { speak: true });
+    const { session, brain } = withBrain();
+    const first = session.ask("leave a note for xander in slack");
     await tick();
     brain.emit("run_1", { kind: "tool_start", tool: "jev_status", preview: "" }, { kind: "tool_end", tool: "jev_status", durationMs: 5, error: false });
     brain.emit("run_1", { kind: "failed", error: "ollama-cloud kimi-k3 HTTP 400 Bad Request", modelError: true }, null);
@@ -561,9 +546,8 @@ describe("Session: brain lane (Hermes)", () => {
     expect(brain.sent).toHaveLength(1);
     expect(r1.output).toBe("Hermes hit an error from its model after jev status. Say it again and I'll retry.");
     expect(brain.resets).toBe(0);
-    expect(speaker!.said.at(-1)).toBe(r1.output);
 
-    const second = session.ask("check my email", { speak: true });
+    const second = session.ask("check my email");
     await tick();
     brain.emit("run_2", { kind: "tool_start", tool: "jev_browse", preview: "" }, { kind: "failed", error: "HTTP 400 Bad Request", modelError: true }, null);
     const r2 = await second;
@@ -571,7 +555,7 @@ describe("Session: brain lane (Hermes)", () => {
     expect(brain.resets).toBe(1);
 
     // an ordinary failure is not a model error: no retry, no rotation
-    const third = session.ask("and now", { speak: true });
+    const third = session.ask("and now");
     await tick();
     brain.emit("run_3", { kind: "failed", error: "model timeout" }, null);
     expect((await third).output).toBe("model timeout");
@@ -587,30 +571,6 @@ describe("Session: brain lane (Hermes)", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(brain.sent).toHaveLength(1);
     expect((await asked).ok).toBe(false);
-  });
-
-  it("speaks the lead of a long answer, as much as the voice allows", async () => {
-    const { session, brain, speaker } = withBrain({ speaker: true });
-    speaker!.maxChars = 600;
-    await session.command("what's on my calendar today", { speak: true });
-    const lead = "You have two meetings today: standup at nine and lunch with Sam at noon.";
-    const detail = "- 9:00 standup\n- 12:00 lunch with Sam\n\nAnything else?";
-    brain.emit("run_1", { kind: "completed", output: `${lead}\n\n${detail}` }, null);
-    await tick();
-    expect(speaker!.said.at(-1)).toBe(lead);
-  });
-
-  it("interrupt() stops the voice and unmutes at once; the run carries on", async () => {
-    const { session, brain, speaker, messages } = withBrain({ speaker: true });
-    await session.command("what's on my calendar today", { speak: true });
-    brain.emit("run_1", { kind: "completed", output: "A long answer that keeps going." }, null);
-    await tick();
-    expect(speaker!.said.at(-1)).toBe("A long answer that keeps going.");
-    session.interrupt();
-    expect(speaker!.stopped).toBeGreaterThan(0);
-    const speaking = messages.filter((m): m is Extract<ServerMessage, { type: "speaking" }> => m.type === "speaking").map((m) => m.active);
-    expect(speaking.at(-1)).toBe(false);
-    expect(brain.stops).toEqual([]);
   });
 
   it("an unreachable brain is an error, not a hang", async () => {
@@ -655,8 +615,8 @@ describe("Session: brain lane (Hermes)", () => {
     expect(r.steps[0]!.result).toEqual({ text: "Opened Resume 2026.pdf", level: "ok" });
     expect(one.brain.sent).toEqual([]);
 
-    const few = withBrain({ computer: true, speaker: true, files: { resume: ["/Users/j/Documents/Resume 2026.pdf", "/Users/j/Downloads/resume-old.docx"] } });
-    const q = await few.session.command("open my resume", { speak: true });
+    const few = withBrain({ computer: true, files: { resume: ["/Users/j/Documents/Resume 2026.pdf", "/Users/j/Downloads/resume-old.docx"] } });
+    const q = await few.session.command("open my resume");
     expect(q.ok).toBe(false); // a question is open: the command is not done
     expect(q.pending?.kind).toBe("clarify");
     expect(few.opened).toEqual([]);
@@ -668,8 +628,7 @@ describe("Session: brain lane (Hermes)", () => {
         { elementId: "file:1", label: "resume-old.docx (Downloads)", probability: 0 },
       ],
     });
-    expect(few.speaker!.said.at(-1)).toBe("I found 2 files called resume. Which one: Resume 2026.pdf (Documents), or resume-old.docx (Downloads)");
-    const pick = await few.session.command("the second one", { speak: true });
+    const pick = await few.session.command("the second one");
     expect(few.opened).toEqual(["/Users/j/Downloads/resume-old.docx"]);
     expect(pick.steps[0]!.result).toEqual({ text: "Opened resume-old.docx", level: "ok" });
     expect(few.session.pendingSummary()).toBeNull();
@@ -707,37 +666,29 @@ describe("Session: brain lane (Hermes)", () => {
 });
 
 describe("Session: brain approval beside a browser question", () => {
-  class FakeSpeaker {
-    said: string[] = [];
-    async speak(text: string) { this.said.push(text); }
-    stop() {}
-  }
   const risky = [el("e0", { tag: "button", text: "Delete account" })];
   function both() {
     const executor = new FakeExecutor(risky);
     const brain = new FakeBrain();
-    const speaker = new FakeSpeaker();
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker });
-    return { executor, brain, speaker, session };
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain });
+    return { executor, brain, session };
   }
 
-  it("neither question clobbers the other; a spoken yes answers the browser first, then the approval is read out", async () => {
-    const { session, brain, executor, speaker } = both();
-    await session.command("summarize my week", { speak: true });
-    const c = await session.command("click delete account", { speak: true });
+  it("neither question clobbers the other; a yes answers the browser first, then the approval outcome is reported", async () => {
+    const { session, brain, executor } = both();
+    await session.command("summarize my week");
+    const c = await session.command("click delete account");
     expect(c.pending?.kind).toBe("confirm");
     brain.emit("run_1", { kind: "approval", requestId: "r1", summary: "read your calendar", choices: ["once", "deny"] });
     await tick();
     expect(session.pending?.kind).toBe("confirm");
     expect(session.approval?.runId).toBe("run_1");
-    expect(speaker.said.some((t) => /calendar/.test(t))).toBe(false); // not spoken over the open browser question
-    const r = await session.command("yes", { speak: true });
+    const r = await session.command("yes");
     expect(executor.executed.map((a) => a.kind)).toEqual(["click"]);
     expect(brain.approvals).toEqual([]);
     expect(r.ok).toBe(true); // the parked approval does not fail the command…
     expect(r.pending).toEqual({ kind: "approval", question: "Hermes wants to read your calendar. Allow it?", choices: ["once", "deny"] });
-    expect(speaker.said.at(-1)).toBe("did click Hermes wants to read your calendar. Allow it?"); // …but is read out with its outcome
-    const a = await session.command("yes", { speak: true });
+    const a = await session.command("yes");
     expect(brain.approvals).toEqual([{ runId: "run_1", choice: "once", requestId: "r1" }]);
     expect(a.steps[0]!.result?.text).toBe("Allowed: read your calendar");
   });
@@ -780,72 +731,33 @@ describe("Session: brain approval beside a browser question", () => {
   });
 });
 
-describe("Session: spoken feedback in degraded modes", () => {
-  class FakeSpeaker {
-    said: string[] = [];
-    async speak(text: string) { this.said.push(text); }
-    stop() {}
-  }
-  it("without a brain, a hermes-routed command that ran locally is still spoken", async () => {
+describe("Session: degraded modes", () => {
+  it("a brain stream that throws still resolves ask()", async () => {
     const executor = new FakeExecutor();
-    const speaker = new FakeSpeaker();
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), speaker });
-    await session.command("find me 20 dentists in austin", { speak: true });
-    expect(executor.executed.map((a) => a.kind)).toEqual(["search"]);
-    expect(speaker.said).toHaveLength(1);
-    expect(speaker.said[0]).toMatch(/^did search/); // the fake page never changes, so the check adds a "stuck" note
-  });
-
-  it("a brain stream that throws is spoken, and ask() resolves", async () => {
-    const executor = new FakeExecutor();
-    const speaker = new FakeSpeaker();
     const brain = new FakeBrain();
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker });
-    const asked = session.ask("what's the weather", { speak: true });
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain });
+    const asked = session.ask("what's the weather");
     await tick();
     brain.throwOn("run_1", new Error("socket hang up"));
     const r = await asked;
     expect(r).toMatchObject({ ok: false, output: "socket hang up" });
-    expect(speaker.said.at(-1)).toBe("Hermes dropped out: socket hang up");
   });
 });
 
 describe("Session: the pause switch", () => {
-  it("'go to sleep' by voice stops everything, asks the host to pause, and says so", async () => {
+  it("'go to sleep' stops everything, asks the host to pause, and says so", async () => {
     const executor = new FakeExecutor();
-    const said: string[] = [];
-    const speaker = { said, async speak(t: string) { said.push(t); }, stop() {} };
     const brain = new FakeBrain();
     let paused = false;
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, onSleep: () => (paused = true) });
-    await session.command("what's on my calendar", { speak: true });
-    const r = await session.command("go to sleep", { speak: true });
+    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, onSleep: () => (paused = true) });
+    await session.command("what's on my calendar");
+    const r = await session.command("go to sleep");
     expect(paused).toBe(true);
     expect(r.steps[0]!.result?.text).toMatch(/^Okay, going quiet/);
-    expect(said.at(-1)).toMatch(/^Okay, going quiet/);
     expect(brain.sent).toEqual(["what's on my calendar"]); // the sleep command never reaches the brain
     // "that's all for now" and "pause" count too; a question does not
     expect(isSleepCommand("that's all for now.")).toBe(true);
     expect(isSleepCommand("pause")).toBe(true);
     expect(isSleepCommand("turn off the lights")).toBe(false);
-  });
-
-  it("narrates a long brain run so the user knows it is alive", async () => {
-    const executor = new FakeExecutor();
-    const said: string[] = [];
-    const speaker = { async speak(t: string) { said.push(t); }, stop() {} };
-    const brain = new FakeBrain();
-    const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, progressMs: 15 });
-    const asked = session.ask("find me 20 dentists in austin", { speak: true });
-    await tick();
-    brain.emit("run_1", { kind: "tool_start", tool: "web_search", preview: "" });
-    await new Promise((r) => setTimeout(r, 40));
-    expect(said.filter((s) => s.startsWith("Still on it"))).not.toHaveLength(0);
-    expect(said.find((s) => s.startsWith("Still on it"))).toBe("Still on it — 1 tool in. Say stop to drop it.");
-    brain.emit("run_1", { kind: "completed", output: "Done." }, null);
-    await asked;
-    const n = said.length;
-    await new Promise((r) => setTimeout(r, 40));
-    expect(said).toHaveLength(n); // the narration stops with the run
   });
 });

@@ -194,14 +194,14 @@ describe("RemoteExecutor over /ws/bridge", () => {
     await waitFor(() => bridge.ready);
     hub.followDefault();
     await waitFor(() => hellos.length === 2);
-    ui.send(JSON.stringify({ type: "command", text: "scroll down", via: "text" }));
+    ui.send(JSON.stringify({ type: "command", text: "scroll down" }));
     await waitFor(() => fake.requests.some((r) => r.req.op === "execute"));
     expect(playwright.executed).toEqual([]);
     fake.ws.close();
     await waitFor(() => !bridge.ready);
     hub.followDefault();
     await waitFor(() => hellos.length === 3);
-    ui.send(JSON.stringify({ type: "command", text: "scroll down", via: "text" }));
+    ui.send(JSON.stringify({ type: "command", text: "scroll down" }));
     await waitFor(() => playwright.executed.length === 1);
   });
 });

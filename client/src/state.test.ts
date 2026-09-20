@@ -71,7 +71,6 @@ describe("reducer", () => {
     const s = run([{ type: "socket", connected: true }, { type: "hello", jev: { enabled: true, model: "jev-latest" }, viewport: { width: 1000, height: 600 } }]);
     expect(s.connected).toBe(true);
     expect(s.jev?.model).toBe("jev-latest");
-    expect(reducer(s, { type: "speaking", active: true }).speaking).toBe(true);
     expect(s.viewport).toEqual({ width: 1000, height: 600 });
   });
 

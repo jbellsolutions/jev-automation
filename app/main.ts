@@ -12,7 +12,6 @@ import { FrontExecutor } from "../server/executors/front.js";
 import { selectMac } from "../server/executors/mac.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { RemoteExecutor } from "../server/executors/remote.js";
-import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
 import { type PanelState, onEscape, onHotkey, onPaused, onRendererListening, onRendererSpeaking, onWindowVisibility } from "./hotkey.js";
 import { trayIconPng } from "./tray-icon.js";
 
@@ -142,7 +141,6 @@ async function main() {
   if (process.platform === "darwin") app.dock?.hide();
 
   const decider = createDecider();
-  const speaker = selectSpeaker();
   const brain = createBrain();
   const computer = selectComputer();
   // the user's Chrome: registered up front, driven while the bridge extension is connected
@@ -157,7 +155,6 @@ async function main() {
     token: process.env.JEV_TOKEN,
     clientDir: path.join(root, "dist", "client"),
     defaultSession: process.env.JEV_DEFAULT_SESSION,
-    speaker,
     brain,
     computer,
     bridge,
@@ -200,7 +197,6 @@ async function main() {
       { label: `Talk (${HOTKEY})`, click: () => applyEffects(onHotkey(panel).effects), enabled: !panel.paused },
       { label: panel.paused ? "Resume Jev" : "Pause Jev (off: hears, says and does nothing)", click: () => setPaused(!panel.paused) },
       { type: "separator" },
-      { label: `Voice out: ${describeSpeaker(speaker)}`, enabled: false },
       { label: `Jev: ${decider.enabled ? decider.model : "heuristics"}`, enabled: false },
       { type: "separator" },
       { label: "Quit Jev", click: () => app.quit() },
@@ -221,7 +217,7 @@ async function main() {
     console.error(`Could not register the ${HOTKEY} hotkey; use the tray menu.`);
   }
   showPanel();
-  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}  voice out: ${describeSpeaker(speaker)}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
+  console.log(`Jev desktop → ${baseUrl}  hotkey ${HOTKEY}${envKeys.length ? `  (.env: ${envKeys.length} keys)` : ""}`);
 
   app.on("before-quit", () => {
     quitting = true;

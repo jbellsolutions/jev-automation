@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { WebSocket } from "ws";
 import type { Brain } from "../core/brain.js";
 import type { Decider } from "../core/decide.js";
-import type { Speaker } from "../core/speak.js";
 import type { Executor } from "../core/executor.js";
 import type { ServerMessage } from "../core/protocol.js";
 import type { SessionStatus } from "../core/results.js";
@@ -68,7 +67,6 @@ export interface HubOptions {
   screenshotIntervalMs: number;
   /** Session id programmatic callers and new UIs get when they don't name one. */
   defaultSession?: string;
-  speaker?: Speaker | null;
   brain?: Brain | null;
   computer?: Computer | null;
 }
@@ -109,7 +107,6 @@ export class Hub {
     const session = new Session(id, {
       executor,
       decider: this.opts.decider,
-      speaker: this.opts.speaker,
       brain: this.opts.brain,
       computer: this.opts.computer,
       afterAction: () => streamer.push(true),

@@ -9,7 +9,7 @@ import { appRequest, fileRequest, isResetCommand, isSleepCommand, isStopWord } f
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
-import { MAX_SPOKEN, type Speaker, clipSpoken, spokenPart, spokenSummary } from "./speak.js";
+import { resultSummary } from "./summary.js";
 import type { DecisionSummary, ServerMessage, StepInfo, VerifySummary } from "./protocol.js";
 import type { CommandResult, PendingSummary, SessionStatus, StatusLevel, StepResult } from "./results.js";
 import { type VerifyResult, describeVerify } from "./verify.js";
@@ -36,7 +36,6 @@ export interface ApprovalPending {
 interface BrainState {
   id: string;
   stepId: number;
-  voice: boolean;
   /** What was sent, for a retry. */
   text: string;
   /** 1 = first run for this utterance; a model error re-sends up to MAX_ATTEMPTS times. */
@@ -95,8 +94,6 @@ export interface SessionDeps {
   /** "off": never check outcomes. Sequences always check (blocking); single commands check
    *  in the background so they stay as fast as before. */
   verify?: "on" | "off";
-  /** Spoken replies for commands that arrive by voice. */
-  speaker?: Speaker | null;
   /** The agent behind the `hermes` route. Without one, such commands fall back to the browser
    *  action Jev also decided, or to a warning. */
   brain?: Brain | null;
@@ -105,8 +102,6 @@ export interface SessionDeps {
   retryDelayMs?: number;
   /** "go to sleep": the host switches the assistant off (the hub's pause). */
   onSleep?: () => void;
-  /** How often a long brain run is narrated aloud ("still on it"); 0 = never. */
-  progressMs?: number;
 }
 
 export function summarize(d: Decision): DecisionSummary {
@@ -207,7 +202,7 @@ export class Session {
 
   private approvalSummary(): PendingSummary {
     const a = this.approval;
-    return a ? { kind: "approval", question: Session.approvalQuestion(a.summary), choices: a.choices } : null;
+    return a ? { kind: "approval", question: Session.approvalQuestion(this.deps.brain?.name ?? "the assistant", a.summary), choices: a.choices } : null;
   }
 
   async page(): Promise<{ url: string; title: string }> {
@@ -219,15 +214,11 @@ export class Session {
     return { id: this.id, kind: this.executor.kind, ...page, busy: this.busy, pending: this.pendingSummary(), capabilities: this.executor.capabilities, ready: this.executor.ready !== false };
   }
 
-  /** A spoken or typed command. Resolves when the command has been acted on or has left a
-   *  question open; never rejects. With `speak`, the outcome is also read aloud. With `local`,
-   *  the brain is never consulted — for callers that are the brain (its jev_browse tool), so a
-   *  request can't bounce back into a second run. */
-  command(text: string, opts: { speak?: boolean; local?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(
-      this.enqueue(() => this.withAwaitedVerify(!!opts.speak, () => this.withLocalOnly(!!opts.local, () => this.handleCommand(text)))),
-      opts.speak,
-    );
+  /** A typed command. Resolves when the command has been acted on or has left a question open;
+   *  never rejects. With `local`, the brain is never consulted — for callers that are the brain
+   *  (its jev_browse tool), so a request can't bounce back into a second run. */
+  command(text: string, opts: { local?: boolean } = {}): Promise<CommandResult> {
+    return this.enqueue(() => this.withLocalOnly(!!opts.local, () => this.handleCommand(text)));
   }
 
   private localOnly = false;
@@ -248,65 +239,18 @@ export class Session {
 
   /** A command whose answer the caller wants in full: when it reaches the brain, resolves with
    *  the run's final output instead of the "on it" acknowledgement. */
-  async ask(text: string, opts: { speak?: boolean } = {}): Promise<CommandResult & { output: string }> {
-    const r = await this.command(text, opts);
+  async ask(text: string): Promise<CommandResult & { output: string }> {
+    const r = await this.command(text);
     const run = this.brain;
     const started = r.steps.find((s) => run && s.stepId === run.stepId);
-    if (!run || !started) return { ...r, output: spokenSummary(r, this.maxSpoken) };
+    if (!run || !started) return { ...r, output: resultSummary(r) };
     const outcome = await run.done;
     return { ...r, ok: r.ok && outcome.ok, output: outcome.output };
   }
 
-  /** Set while a task runs whose caller needs the outcome check in the result (a voice user
-   *  is waiting to hear it), so single commands verify before resolving instead of in the background.
-   *  Doubles as "this command came by voice": the brain lane then speaks its acknowledgement and answer. */
-  private awaitVerify = false;
-  private async withAwaitedVerify<T>(on: boolean, task: () => Promise<T>): Promise<T> {
-    const prev = this.awaitVerify;
-    this.awaitVerify = on;
-    try {
-      return await task();
-    } finally {
-      this.awaitVerify = prev;
-    }
-  }
-
-  private voiced(result: Promise<CommandResult>, speak: boolean | undefined): Promise<CommandResult> {
-    if (!speak || !this.deps.speaker) return result;
-    return result.then((r) => {
-      this.say(spokenSummary(r, this.maxSpoken));
-      return r;
-    });
-  }
-
-  /** How much of an answer is read aloud: the voice decides (a robotic voice earns a shorter cut). */
-  private get maxSpoken(): number {
-    return this.deps.speaker?.maxChars ?? MAX_SPOKEN;
-  }
-
-  private speakingRun = 0;
-  /** Read `text` aloud, interrupting anything still being said. UIs get `speaking` so they can
-   *  mute the microphone while the assistant talks. */
-  say(text: string): void {
-    const speaker = this.deps.speaker;
-    if (!speaker || !text) return;
-    const run = ++this.speakingRun;
-    this.emit({ type: "speaking", active: true });
-    speaker
-      .speak(text)
-      .catch(() => {})
-      .finally(() => {
-        if (run === this.speakingRun) this.emit({ type: "speaking", active: false });
-      });
-  }
-
-  /** Answer to a pending confirmation from a UI control (as opposed to a spoken reply). */
-  reply(ok: boolean, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.replyInner(ok, !!opts.speak), opts.speak);
-  }
-
-  private replyInner(ok: boolean, awaitVerify: boolean): Promise<CommandResult> {
-    return this.enqueue(() => this.withAwaitedVerify(awaitVerify, async () => {
+  /** Answer to a pending confirmation from a UI control. */
+  reply(ok: boolean): Promise<CommandResult> {
+    return this.enqueue(async () => {
       const pending = this.pending?.kind === "confirm" ? this.pending : null;
       const rest = this.takeContinuation();
       this.pending = null;
@@ -318,7 +262,7 @@ export class Session {
       }
       await this.runHeld(step, pending.action, pending.before, rest !== null);
       return this.resume([step], rest);
-    }));
+    });
   }
 
   /** Answer to a brain approval request from a UI control. */
@@ -338,17 +282,13 @@ export class Session {
       await this.deps.brain!.approve(pending.runId, choice, pending.requestId);
       step.result = choice === "deny" ? this.report(`Denied: ${pending.summary}`, "warn") : this.report(`Allowed: ${pending.summary}`, "ok");
     } catch (err) {
-      step.result = this.report(`Couldn't answer Hermes: ${errMsg(err)}`, "error");
+      step.result = this.report(`Couldn't answer ${this.deps.brain?.name ?? "the assistant"}: ${errMsg(err)}`, "error");
     }
   }
 
   /** A clarification option chosen from a UI control. */
-  pick(elementId: string, opts: { speak?: boolean } = {}): Promise<CommandResult> {
-    return this.voiced(this.pickInner(elementId, !!opts.speak), opts.speak);
-  }
-
-  private pickInner(elementId: string, awaitVerify: boolean): Promise<CommandResult> {
-    return this.enqueue(() => this.withAwaitedVerify(awaitVerify, async () => {
+  pick(elementId: string): Promise<CommandResult> {
+    return this.enqueue(async () => {
       const pending = this.pending?.kind === "clarify" ? this.pending : null;
       const opt = pending?.decision.clarify?.options.find((o) => o.elementId === elementId);
       const rest = this.takeContinuation();
@@ -357,7 +297,7 @@ export class Session {
       if (!pending || !opt) return this.finish([step]);
       await this.runHeld(step, { kind: "click", elementId: opt.elementId, label: opt.label }, pending.before, rest !== null);
       return this.resume([step], rest);
-    }));
+    });
   }
 
   /** Click on the live view; fx/fy are fractions of the frame. */
@@ -381,18 +321,14 @@ export class Session {
     });
   }
 
-  /** Stop talking, now; the microphone reopens at once. Nothing else is touched. */
+  /** Cancel the brain's current run, if any. Nothing else is touched. */
   interrupt(): void {
-    if (!this.deps.speaker) return;
-    this.speakingRun++; // the cut-off utterance's own "finished" is then ignored
-    this.deps.speaker.stop();
-    this.emit({ type: "speaking", active: false });
+    this.stopBrain();
   }
 
   /** Drop whatever is in flight or pending. Bypasses the queue on purpose. `quiet` skips the
    *  "Stopped" status (a pause announces itself). */
   cancel(quiet = false): void {
-    this.interrupt();
     this.inFlight?.abort();
     this.pending = null;
     this.continuation = null;
@@ -469,7 +405,7 @@ export class Session {
 
   /** Run an action that was waiting on a question, then check it like any other step. */
   private async runHeld(step: StepResult, action: Action, before: PageSnapshot, inSequence: boolean): Promise<void> {
-    const blocking = inSequence || this.awaitVerify;
+    const blocking = inSequence;
     const outcome = await this.runAction(action);
     step.result = { text: outcome.text, level: outcome.level };
     if (blocking) await this.verifyStep(step, action, before, outcome.error);
@@ -560,7 +496,7 @@ export class Session {
         if (decision && !this.fastLane(decision)) {
           const step = this.ack(trimmed);
           this.announce(step, decision);
-          return this.finish([await this.runStep(step, this.awaitVerify ? "blocking" : "async", decision, trimmed)]);
+          return this.finish([await this.runStep(step, "async", decision, trimmed)]);
         }
       }
       this.emit({ type: "steps", original: trimmed, commands });
@@ -582,7 +518,7 @@ export class Session {
     for (let i = from; i < total; i++) {
       const command = commands[i]!;
       const info: StepInfo | undefined = total > 1 ? { index: i, total, original } : undefined;
-      const step = await this.runStep(this.ack(command, info), total > 1 || this.awaitVerify ? "blocking" : "async", undefined, total === 1 ? original : undefined, total > 1);
+      const step = await this.runStep(this.ack(command, info), total > 1 ? "blocking" : "async", undefined, total === 1 ? original : undefined, total > 1);
       steps.push(step);
       if (step.verify?.stuck) {
         if (i + 1 < total) this.report(`Stopped after step ${i + 1} of ${total}: ${step.verify.text}`, "warn");
@@ -653,7 +589,7 @@ export class Session {
     // with a brain there are no dead ends: half-heard fragments go to it too, it can ask back —
     // unless it is busy: then a fragment is more likely room noise than a steer, and is dropped
     if (decision.route === "unclear" && this.brainFor && this.brain) {
-      step.result = this.report("Didn't catch that; Hermes is still working", "warn");
+      step.result = this.report(`Didn't catch that; ${this.brainFor?.name ?? "the assistant"} is still working`, "warn");
       return step;
     }
     if ((decision.route === "hermes" || decision.route === "unclear") && this.brainFor) return this.runBrain(step, said);
@@ -746,8 +682,8 @@ export class Session {
     }
   }
 
-  static approvalQuestion(summary: string): string {
-    return `Hermes wants to ${summary}. Allow it?`;
+  static approvalQuestion(name: string, summary: string): string {
+    return `${name} wants to ${summary}. Allow it?`;
   }
 
   /** "new conversation": stop what the brain is doing and give it a clean thread. */
@@ -760,7 +696,6 @@ export class Session {
       await brain.reset();
       step.lane = "brain";
       step.result = this.report(`${brain.name}: fresh conversation`, "ok");
-      if (this.awaitVerify) this.say("Okay, fresh start.");
     } catch (err) {
       step.result = this.report(`Couldn't reset ${brain.name}: ${errMsg(err)}`, "error");
     }
@@ -771,11 +706,9 @@ export class Session {
    *  steered into the run already in progress); events stream in afterwards, outside the queue. */
   private async runBrain(step: StepResult, text: string): Promise<StepResult> {
     const brain = this.deps.brain!;
-    const voice = this.awaitVerify;
     if (this.brain) {
       try {
         await brain.steer(this.brain.id, text);
-        if (voice) this.say("Okay.");
         step.lane = "brain";
         step.result = this.report(`Told ${brain.name}: ${text}`, "ok");
       } catch (err) {
@@ -784,7 +717,6 @@ export class Session {
       return step;
     }
     this.report(`Asking ${brain.name}…`, "busy");
-    if (voice) this.say("On it.");
     let run: BrainRun;
     try {
       run = await brain.send(text);
@@ -794,7 +726,7 @@ export class Session {
     }
     let resolve!: (o: BrainOutcome) => void;
     const done = new Promise<BrainOutcome>((r) => (resolve = r));
-    const state: BrainState = { id: run.id, stepId: step.stepId, voice, text, attempt: 1, tools: [], done, resolve };
+    const state: BrainState = { id: run.id, stepId: step.stepId, text, attempt: 1, tools: [], done, resolve };
     this.brain = state;
     void this.consumeBrain(run, state);
     step.lane = "brain";
@@ -835,8 +767,8 @@ export class Session {
     return `${name} hit an error from its model${after}.${tail}`;
   }
 
-  /** Forward every run event to the UIs; questions and the answer are also spoken when the
-   *  command came by voice. Statuses stay "busy" so they never claim a later step's outcome. */
+  /** Forward every run event to the UIs. Statuses stay "busy" so they never claim a later
+   *  step's outcome. */
   private async consumeBrain(run: BrainRun, state: BrainState): Promise<void> {
     const name = this.deps.brain?.name ?? "the brain";
     let settled = false;
@@ -845,15 +777,6 @@ export class Session {
       state.resolve(o);
     };
     let handedOver = false;
-    // a long run is narrated now and then, so the user knows it is alive and can say stop
-    const progressMs = this.deps.progressMs ?? 45_000;
-    const progress =
-      state.voice && progressMs > 0
-        ? setInterval(() => {
-            const n = state.tools.length;
-            this.say(n ? `Still on it — ${n} ${n === 1 ? "tool" : "tools"} in. Say stop to drop it.` : "Still on it. Say stop to drop it.");
-          }, progressMs)
-        : null;
     try {
       for await (const event of run.events) {
         this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event });
@@ -864,8 +787,6 @@ export class Session {
             break;
           case "approval":
             this.approval = { runId: run.id, requestId: event.requestId, summary: event.summary, choices: event.choices };
-            // spoken now unless the browser is mid-question; then it is read out with that answer's outcome
-            if (state.voice && !this.pending) this.say(clipSpoken(Session.approvalQuestion(event.summary)));
             break;
           case "approved":
             if (this.approval?.runId === run.id) this.approval = null;
@@ -873,13 +794,11 @@ export class Session {
           case "completed":
             this.modelFailures = 0;
             settle({ ok: true, output: event.output });
-            if (state.voice) this.say(spokenPart(event.output, this.maxSpoken));
             break;
           case "failed": {
             if (!event.modelError) {
               this.modelFailures = 0;
               settle({ ok: false, output: event.error });
-              if (state.voice) this.say(clipSpoken(`${name} couldn't finish: ${event.error}`, this.maxSpoken));
               break;
             }
             this.modelFailures++;
@@ -896,7 +815,6 @@ export class Session {
             const line = this.modelFailureLine(name, state, rotate);
             this.report(line, "error");
             settle({ ok: false, output: line });
-            if (state.voice) this.say(clipSpoken(line, this.maxSpoken));
             break;
           }
           case "cancelled":
@@ -907,9 +825,7 @@ export class Session {
     } catch (err) {
       this.emit({ type: "brain_event", stepId: state.stepId, runId: run.id, event: { kind: "failed", error: errMsg(err) } });
       settle({ ok: false, output: errMsg(err) });
-      if (state.voice) this.say(clipSpoken(`${name} dropped out: ${errMsg(err)}`, this.maxSpoken));
     } finally {
-      if (progress) clearInterval(progress);
       if (!handedOver) {
         if (!settled) settle({ ok: false, output: "The run ended without an answer" });
         if (this.brain === state) this.brain = null;
