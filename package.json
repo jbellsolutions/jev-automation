@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Speak to your browser: live speech transcription + TypeSafe Jev decisions driving a Playwright-controlled Chromium in realtime.",
+  "description": "Jev: a text-first Mac productivity panel. TypeSafe Jev decisions drive instant browser (Playwright/Chrome bridge) and Mac (cua-driver) actions; anything else goes to a text-only OpenRouter model behind it.",
   "engines": {
     "node": ">=20"
   },

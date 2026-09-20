@@ -47,13 +47,7 @@ export interface Brain {
   stop(runId: string): Promise<void>;
 }
 
-/** Does a run failure look like the model provider rejecting the request (HTTP 4xx), as
- *  opposed to the task failing? Those are worth a retry and, if persistent, a fresh thread. */
-export function isModelError(error: string): boolean {
-  return /\b4\d\d\b|bad request|invalid_request|context length|too many tokens|maximum context/i.test(error);
-}
-
-/** Map a spoken reply to a pending approval onto what the request allows. */
+/** Map a typed reply to a pending approval onto what the request allows. */
 export function approvalChoice(reply: "confirm" | "cancel", raw: string, offered: ApprovalChoice[]): ApprovalChoice {
   if (reply === "cancel") return "deny";
   const t = raw.toLowerCase();
