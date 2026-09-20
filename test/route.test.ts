@@ -3,7 +3,7 @@ import { approvalChoice } from "../core/brain.js";
 import { parseCommand } from "../core/commands.js";
 import { THRESHOLDS, decideHeuristically, interpretAnswers } from "../core/decide.js";
 import type { PageSnapshot } from "../core/elements.js";
-import { ROUTES, appRequest, reconcileRoute, routeHeuristically } from "../core/route.js";
+import { ROUTES, appRequest, fileRequest, reconcileRoute, routeHeuristically } from "../core/route.js";
 import { el } from "./helpers/fake-executor.js";
 
 const page: PageSnapshot = { url: "https://example.test/", title: "Example", elements: [el("e0", { text: "Pricing", hrefShort: "/pricing" })] };
@@ -17,6 +17,9 @@ describe("route: keyword mirror", () => {
     ["search for cheap flights to lisbon", "browser_now"],
     ["open slack", "computer"],
     ["switch to finder", "computer"],
+    ["open my resume", "computer"],
+    ["open the q3 budget spreadsheet", "computer"],
+    ["open my calendar", "hermes"],
     ["open spotify", "browser_now"], // a site alias, not the app
     ["find me 20 dentists in austin and put them in a sheet", "hermes"],
     ["what's on my calendar today", "hermes"],
@@ -33,11 +36,27 @@ describe("route: keyword mirror", () => {
     expect(decide(text).route).toBe(route);
   });
 
-  it("gives the computer lane an open_app action and the stop lane a stop", () => {
+  it("gives the computer lane an open_app or open_path action and the stop lane a stop", () => {
     const d = decide("open slack");
     expect(d.action).toEqual({ kind: "open_app", app: "slack" });
     expect(d.intent).toBe("open_app");
+    const f = decide("open my resume");
+    expect(f.action).toEqual({ kind: "open_path", query: "resume" });
+    expect(f.intent).toBe("open_path");
     expect(decide("cancel that").action).toEqual({ kind: "stop" });
+  });
+
+  it("fileRequest names the file, never an app, a site or a thing that is not a file", () => {
+    expect(fileRequest("open my resume")).toBe("resume");
+    expect(fileRequest("Open the Q3 budget spreadsheet.")).toBe("q3 budget");
+    expect(fileRequest("pull up our pitch deck")).toBe("pitch");
+    expect(fileRequest("show me the invoice pdf")).toBe("invoice");
+    expect(fileRequest("open my calendar")).toBeNull();
+    expect(fileRequest("open my email")).toBeNull();
+    expect(fileRequest("open the slack")).toBeNull();
+    expect(fileRequest("open slack")).toBeNull();
+    expect(fileRequest("open youtube")).toBeNull();
+    expect(fileRequest("open resume")).toBeNull(); // no "my"/"the": too easily a site or an app
   });
 
   it("keeps the browser action alongside a hermes route so brain-less hosts still act", () => {
@@ -95,9 +114,11 @@ describe("route: Jev answers", () => {
     expect(interpret("hmm what now", answers("browser_now", 0.7, "unclear", 0.2)).route).toBe("hermes");
   });
 
-  it("a computer route needs a recognisable app, else the brain takes it", () => {
+  it("a computer route needs a recognisable app or file, else the brain takes it", () => {
     expect(interpret("open slack", answers("computer", 0.8, "open_url", 0.5))).toMatchObject({ route: "computer", action: { kind: "open_app", app: "slack" } });
-    expect(interpret("open my tax return", answers("computer", 0.8, "unclear", 0.3)).route).toBe("hermes");
+    expect(interpret("open my tax return", answers("computer", 0.8, "unclear", 0.3))).toMatchObject({ route: "computer", action: { kind: "open_path", query: "tax return" } });
+    expect(interpret("open my calendar", answers("computer", 0.8, "unclear", 0.3)).route).toBe("hermes");
+    expect(interpret("get the thing ready", answers("computer", 0.8, "unclear", 0.3)).route).toBe("hermes");
   });
 
   it("stop and unclear override the browser intent", () => {

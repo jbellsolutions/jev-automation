@@ -149,7 +149,9 @@ export class Hub {
     const d = this.opts.defaultSession;
     if (d && this.entries.has(d)) return d;
     const ready = (id: string) => this.entries.get(id)?.session.executor.ready !== false;
-    for (const id of ["chrome", "playwright"]) if (this.entries.has(id) && ready(id)) return id;
+    // "front" stands for whatever the user is looking at (their Chrome tab or the Mac app);
+    // then the Chrome bridge on its own, then the built-in browser
+    for (const id of ["front", "chrome", "playwright"]) if (this.entries.has(id) && ready(id)) return id;
     return [...this.entries.keys()].find(ready) ?? this.entries.keys().next().value ?? null;
   }
 

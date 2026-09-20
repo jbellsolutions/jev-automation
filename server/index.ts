@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { createDecider } from "../core/decide.js";
 import { createCompanion } from "./companion.js";
 import { selectComputer } from "./computer.js";
+import { FrontExecutor } from "./executors/front.js";
+import { selectMac } from "./executors/mac.js";
 import { PlaywrightExecutor } from "./executors/playwright.js";
 import { RemoteExecutor } from "./executors/remote.js";
 import { createBrain } from "./hermes.js";
@@ -52,11 +54,17 @@ const playwright = new PlaywrightExecutor({
   jpegQuality: JPEG_QUALITY,
 });
 
+const mac = selectMac();
+const front = mac ? new FrontExecutor({ mac, chrome: bridge, fallback: playwright }) : null;
+
 async function main(): Promise<void> {
   const port = await companion.listen(PORT);
+  if (front) companion.register(front);
   companion.register(bridge);
   companion.register(playwright);
   await playwright.start();
+  if (front) await front.start();
+  console.log(front ? (mac!.ready ? "Mac: cua-driver ready — acting in the app in front" : "Mac: cua-driver not answering — Mac apps off (run hermes computer-use doctor)") : "Mac: off");
   console.log(`Jev voice browser → http://localhost:${port}${existsSync(path.join(clientDir, "index.html")) ? "" : "  (client not built: npm run build)"}`);
   console.log(decider.enabled ? `Decisions: TypeSafe Jev (${decider.model})` : "Decisions: keyword heuristics (set TYPESAFE_API_KEY to use Jev)");
   console.log(companion.auth.configured ? "API: bearer token required (JEV_TOKEN)" : "API: disabled — set JEV_TOKEN to enable /api and the MCP server");

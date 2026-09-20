@@ -11,7 +11,7 @@ import type { Action, ScrollDirection } from "./actions.js";
 import { describeAction } from "./actions.js";
 import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo } from "./commands.js";
 import { NONE_OPTION, type PageElement, type PageSnapshot, describeElement, elementCriteria } from "./elements.js";
-import { FAST_LANE_THRESHOLD, ROUTES, ROUTE_THRESHOLD, type Route, appRequest, reconcileRoute, routeHeuristically } from "./route.js";
+import { FAST_LANE_THRESHOLD, ROUTES, ROUTE_THRESHOLD, type Route, appRequest, fileRequest, reconcileRoute, routeHeuristically } from "./route.js";
 import { type VerifyInput, type VerifyResult, buildVerifyQuestions, buildVerifyState, heuristicVerdict, interpretVerifyAnswers, quickVerdict } from "./verify.js";
 
 export const INTENTS = {
@@ -51,7 +51,7 @@ export const INTENTS = {
 
 export type Intent = keyof typeof INTENTS;
 /** Browser intents plus the one computer-lane intent code can act on before M5. */
-export type DecisionIntent = Intent | "open_app";
+export type DecisionIntent = Intent | "open_app" | "open_path";
 
 export interface Alternative {
   elementId: string;
@@ -218,9 +218,15 @@ function applyRoute(d: Decision, route: Route, confidence: number, parsed: Parse
   d.routeConfidence = confidence;
   if (route === "computer") {
     const app = appRequest(parsed.text);
+    const file = app ? null : fileRequest(parsed.text);
     if (app) {
       d.intent = "open_app";
       d.action = { kind: "open_app", app };
+      d.needsConfirmation = false;
+      d.clarify = null;
+    } else if (file) {
+      d.intent = "open_path";
+      d.action = { kind: "open_path", query: file };
       d.needsConfirmation = false;
       d.clarify = null;
     } else {
@@ -346,6 +352,8 @@ export function matchElements(label: string, elements: PageElement[], fieldsOnly
 export function decideHeuristically(parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
   const d = decideBrowserHeuristically(parsed, snapshot);
   const r = routeHeuristically(parsed.text, d.intent !== "unclear" && d.intent !== "stop");
+  // "open the documentation" with a Documentation link in front is that link, not a file search
+  if (r.route === "computer" && !appRequest(parsed.text) && d.action.kind === "click") return applyRoute(d, "browser_now", r.confidence, parsed);
   return applyRoute(d, r.route, r.confidence, parsed);
 }
 

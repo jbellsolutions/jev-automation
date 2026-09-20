@@ -17,6 +17,8 @@ export type Action =
   | { kind: "stop" }
   /** Launch or switch to an application on the Mac (the computer lane, not the browser). */
   | { kind: "open_app"; app: string }
+  /** Open a file or folder by name (the computer lane): code finds candidates, Jev never guesses a path. */
+  | { kind: "open_path"; query: string; candidates?: string[] }
   | { kind: "none"; reason: string };
 
 /** Short human-readable summary used in the UI log and confirmation prompts. */
@@ -46,6 +48,8 @@ export function describeAction(a: Action): string {
       return "Stop";
     case "open_app":
       return `Open ${a.app}`;
+    case "open_path":
+      return `Open the file "${a.query}"`;
     case "none":
       return a.reason;
   }

@@ -59,9 +59,24 @@ export interface BrainOutcome {
   output: string;
 }
 
-/** The Mac lane before the accessibility executor exists: just launching applications. */
+/** The Mac lane's launcher: applications by name, files by name. Acting *inside* an app is the
+ *  Mac executor's job (server/executors/mac.ts), reached like any other surface. */
 export interface Computer {
   openApp(app: string): Promise<string>;
+  /** Files whose name contains `query`, best first, at most a handful. */
+  findFiles(query: string): Promise<string[]>;
+  openPath(path: string): Promise<string>;
+}
+
+/** How many file matches are offered before asking is pointless. */
+export const MAX_FILE_CHOICES = 5;
+
+/** "Resume 2026.pdf (Documents)" — what is said aloud when asking which file. */
+export function fileLabel(path: string): string {
+  const parts = path.split("/");
+  const name = parts.pop() ?? path;
+  const folder = parts.pop();
+  return folder ? `${name} (${folder})` : name;
 }
 
 /** The rest of a multi-step utterance, parked while a confirm/clarify question is open. */
@@ -516,6 +531,13 @@ export class Session {
       const picked = idx !== null ? opts[idx] : undefined;
       const rest = this.takeContinuation();
       this.pending = null;
+      if (picked && pending.decision.action.kind === "open_path") {
+        // "which file?" answered: the options were paths, not page elements
+        const step = this.ack(trimmed);
+        const path = pending.decision.action.candidates?.[idx!];
+        step.result = path ? await this.runOpenPath(path) : this.report("That wasn't one of the files I offered", "warn");
+        return this.resume([step], rest);
+      }
       if (picked) {
         const step = this.ack(trimmed);
         await this.runHeld(step, { kind: "click", elementId: picked.elementId, label: picked.label }, pending.before, rest !== null);
@@ -638,6 +660,14 @@ export class Session {
       step.result = { text: outcome.text, level: outcome.level };
       return step;
     }
+    if (decision.action.kind === "open_path") {
+      if (!this.deps.computer) {
+        if (this.brainFor) return this.runBrain(step, said);
+        step.result = this.report(`I can't open files from here yet (${decision.action.query})`, "warn");
+        return step;
+      }
+      return this.runFile(step, decision, snapshot, command, said);
+    }
     if (decision.clarify) {
       this.pending = { kind: "clarify", decision, before: snapshot, command };
       this.emit({ type: "clarify", question: decision.clarify.question, options: decision.clarify.options });
@@ -659,6 +689,45 @@ export class Session {
     if (verifyMode === "blocking") await this.verifyStep(step, decision.action, snapshot, outcome.error);
     else this.verifySoon(step, decision.action, snapshot, outcome.error);
     return step;
+  }
+
+  /** "open my resume": code searches, exactly one match opens, a few matches become a question
+   *  ("first", "the second one"), none go to the brain, which can look harder. */
+  private async runFile(step: StepResult, decision: Decision, snapshot: PageSnapshot, command: string, said: string): Promise<StepResult> {
+    const query = decision.action.kind === "open_path" ? decision.action.query : "";
+    this.report(`Looking for ${query}…`, "busy");
+    let found: string[];
+    try {
+      found = (await this.deps.computer!.findFiles(query)).slice(0, MAX_FILE_CHOICES);
+    } catch (err) {
+      step.result = this.report(errMsg(err), "error");
+      return step;
+    }
+    if (found.length === 0) {
+      if (this.brainFor) return this.runBrain(step, said);
+      step.result = this.report(`I couldn't find a file called ${query}`, "warn");
+      return step;
+    }
+    if (found.length === 1) {
+      step.result = await this.runOpenPath(found[0]!);
+      return step;
+    }
+    const options = found.map((path, i) => ({ elementId: `file:${i}`, label: fileLabel(path), probability: 0 }));
+    // the options are read out after the question by spokenSummary, in this order
+    const question = `I found ${found.length} files called ${query}. Which one:`;
+    decision.action = { kind: "open_path", query, candidates: found };
+    decision.clarify = { question, options };
+    this.pending = { kind: "clarify", decision, before: snapshot, command };
+    this.emit({ type: "clarify", question, options });
+    return step;
+  }
+
+  private async runOpenPath(path: string): Promise<{ text: string; level: StatusLevel }> {
+    try {
+      return this.report(await this.deps.computer!.openPath(path), "ok");
+    } catch (err) {
+      return this.report(errMsg(err), "error");
+    }
   }
 
   private async runComputer(app: string): Promise<{ text: string; level: StatusLevel }> {

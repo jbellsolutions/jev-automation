@@ -135,9 +135,9 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
   server.registerTool(
     "jev_browse",
     {
-      title: "Run a browser command through Jev",
+      title: "Run a command on what the user has in front of them, through Jev",
       description:
-        'Speak to the Jev assistant: a natural-language browser command such as "open wikipedia.org", "click the pricing link", "type hello in the search box and press enter", "scroll to the bottom". Several steps can be chained with "and"/"then". Jev grounds each step against the live page; low-confidence picks come back as a clarification and risky actions as a confirmation — answer either with jev_reply.',
+        'Speak to the Jev assistant: a natural-language command on the surface in front of the user — their Chrome tab when a browser is in front, otherwise the Mac app in front (its accessibility tree) — such as "open wikipedia.org", "click the pricing link", "type hello in the search box and press enter", "scroll to the bottom", "open slack", "open my resume". Several steps can be chained with "and"/"then". Jev grounds each step against the live page or window; low-confidence picks come back as a clarification and risky actions as a confirmation — answer either with jev_reply. jev_status tells you which surface is in front (a URL, or app://<name>).',
       inputSchema: { command: z.string().min(1).describe("The command, as you would say it aloud."), session: sessionArg },
     },
     async ({ command, session }) => {
@@ -191,7 +191,7 @@ export function createJevMcpServer(opts: McpOptions): McpServer {
           `Default session: ${sessions.default ?? "none"}`,
           ...sessions.sessions.map((s) =>
             s.ready === false
-              ? `- ${s.id} (${s.kind}) not connected${s.kind === "chrome" ? " — the user's Chrome needs the Jev bridge extension running" : ""}`
+              ? `- ${s.id} (${s.kind}) not connected${s.kind === "chrome" ? " — the user's Chrome needs the Jev bridge extension running" : s.kind === "mac" ? " — cua-driver is not answering" : ""}`
               : `- ${s.id} (${s.kind}) ${s.busy ? "busy" : "idle"}${s.pending ? ` · waiting for the user: ${s.pending.kind}` : ""} · ${s.title ? `${s.title} — ` : ""}${s.url}`,
           ),
         ];

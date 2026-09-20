@@ -7,3 +7,4 @@ dist/
 # built native helpers
 native/jev-speech/jev-speech
 scratch/
+.DS_Store

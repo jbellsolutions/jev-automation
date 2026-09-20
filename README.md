@@ -94,10 +94,25 @@ off limits to extensions, so switch to a normal tab first.
 `npm run bridge:smoke -- "open wikipedia and search for cats"` proves the whole path in a
 throwaway Chromium without touching your profile.
 
+### Mac apps in front (the `front` surface)
+
+With the same driver installed (below), commands act on **whatever is in front of you**: a
+browser in front means your Chrome tab through the bridge; any other app — Slack, Finder,
+TextEdit, Mail — means its accessibility tree, walked by `cua-driver` and read by Jev the
+way it reads a page. "open slack" launches or fronts the app; "click general" presses the row;
+"type hello and press enter" goes into the focused field; "open my resume" finds the file with
+Spotlight under Documents/Desktop/Downloads and opens it, or asks which of a few matches. The
+floating panel's own window is skipped when deciding what is in front. Actions use the
+accessibility path (no cursor moves, no focus stealing), so you can keep typing while it works.
+The panel shows `app://<name>` as the "URL" of a Mac surface; `JEV_MAC=off` disables it.
+Hermes reaches the same surface through `jev_browse`, and keeps its own `computer_use` tool for
+deeper desktop work.
+
 ### The Mac itself (Hermes computer use)
 
-Anything outside the browser — the desktop, native apps, files — is Hermes' job through its
-`computer_use` tool (Cua's `cua-driver`, macOS). Two things Hermes' defaults do not do for you:
+Anything beyond one obvious action in the app in front — several apps, menus, reading a
+screenshot — is Hermes' job through its `computer_use` tool (Cua's `cua-driver`, macOS). Two
+things Hermes' defaults do not do for you:
 
 1. `hermes computer-use install`, then grant **CuaDriver** both *Accessibility* and *Screen &
    System Audio Recording* in System Settings → Privacy & Security. Check with

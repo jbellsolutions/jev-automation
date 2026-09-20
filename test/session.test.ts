@@ -339,12 +339,18 @@ describe("Session: brain lane (Hermes)", () => {
     async speak(text: string) { this.said.push(text); }
     stop() { this.stopped++; }
   }
-  function withBrain(opts: { speaker?: boolean; computer?: boolean } = {}) {
+  function withBrain(opts: { speaker?: boolean; computer?: boolean; files?: Record<string, string[]> } = {}) {
     const executor = new FakeExecutor([el("e0", { text: "Pricing", hrefShort: "/pricing" })]);
     const brain = new FakeBrain();
     const speaker = opts.speaker ? new FakeSpeaker() : null;
     const opened: string[] = [];
-    const computer = opts.computer ? { openApp: async (app: string) => { opened.push(app); return `Opened ${app}`; } } : null;
+    const computer = opts.computer
+      ? {
+          openApp: async (app: string) => { opened.push(app); return `Opened ${app}`; },
+          findFiles: async (q: string) => (opts.files ?? {})[q] ?? [],
+          openPath: async (p: string) => { opened.push(p); return `Opened ${p.split("/").pop()}`; },
+        }
+      : null;
     const messages: ServerMessage[] = [];
     const session = new Session("fake", { executor, decider: new HeuristicDecider(), brain, speaker, computer, retryDelayMs: 1 });
     session.subscribe((m) => messages.push(m));
@@ -625,6 +631,40 @@ describe("Session: brain lane (Hermes)", () => {
     const noMac = withBrain();
     await noMac.session.command("open slack");
     expect(noMac.brain.sent).toEqual(["open slack"]);
+  });
+
+  it("opens a file by name: one match opens, a few become a question, none go to the brain", async () => {
+    const one = withBrain({ computer: true, files: { resume: ["/Users/j/Documents/Resume 2026.pdf"] } });
+    const r = await one.session.command("open my resume");
+    expect(r.steps[0]!.decision).toMatchObject({ route: "computer", action: { kind: "open_path", query: "resume" } });
+    expect(one.opened).toEqual(["/Users/j/Documents/Resume 2026.pdf"]);
+    expect(r.steps[0]!.result).toEqual({ text: "Opened Resume 2026.pdf", level: "ok" });
+    expect(one.brain.sent).toEqual([]);
+
+    const few = withBrain({ computer: true, speaker: true, files: { resume: ["/Users/j/Documents/Resume 2026.pdf", "/Users/j/Downloads/resume-old.docx"] } });
+    const q = await few.session.command("open my resume", { speak: true });
+    expect(q.ok).toBe(false); // a question is open: the command is not done
+    expect(q.pending?.kind).toBe("clarify");
+    expect(few.opened).toEqual([]);
+    expect(few.session.pendingSummary()).toEqual({
+      kind: "clarify",
+      question: "I found 2 files called resume. Which one:",
+      options: [
+        { elementId: "file:0", label: "Resume 2026.pdf (Documents)", probability: 0 },
+        { elementId: "file:1", label: "resume-old.docx (Downloads)", probability: 0 },
+      ],
+    });
+    expect(few.speaker!.said.at(-1)).toBe("I found 2 files called resume. Which one: Resume 2026.pdf (Documents), or resume-old.docx (Downloads)");
+    const pick = await few.session.command("the second one", { speak: true });
+    expect(few.opened).toEqual(["/Users/j/Downloads/resume-old.docx"]);
+    expect(pick.steps[0]!.result).toEqual({ text: "Opened resume-old.docx", level: "ok" });
+    expect(few.session.pendingSummary()).toBeNull();
+    expect(few.executor.executed).toEqual([]); // a file pick is never a page click
+
+    const none = withBrain({ computer: true });
+    await none.session.command("open my resume");
+    expect(none.opened).toEqual([]);
+    expect(none.brain.sent).toEqual(["open my resume"]); // Spotlight found nothing: the brain can look harder
   });
 
   it("local commands (the brain's own jev_browse) never reach the brain", async () => {

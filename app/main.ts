@@ -8,6 +8,8 @@ import { createCompanion } from "../server/companion.js";
 import { selectComputer } from "../server/computer.js";
 import { loadEnvFile } from "../server/env.js";
 import { createBrain } from "../server/hermes.js";
+import { FrontExecutor } from "../server/executors/front.js";
+import { selectMac } from "../server/executors/mac.js";
 import { PlaywrightExecutor } from "../server/executors/playwright.js";
 import { RemoteExecutor } from "../server/executors/remote.js";
 import { describeSpeaker, selectSpeaker } from "../server/speak/select.js";
@@ -185,9 +187,15 @@ async function main() {
     deviceScaleFactor: Number(process.env.DEVICE_SCALE_FACTOR ?? 2),
     jpegQuality: Number(process.env.JPEG_QUALITY ?? 80),
   });
+  // "front": the Mac app in front (through cua-driver) or, when a browser is in front, the bridge
+  const mac = selectMac({ ownPids: () => [process.pid] });
+  const front = mac ? new FrontExecutor({ mac, chrome: bridge, fallback: playwright }) : null;
+  if (front) companion.register(front);
   companion.register(bridge);
   companion.register(playwright);
   void playwright.start();
+  if (front) void front.start().then(() => console.log(mac!.ready ? "mac: cua-driver ready — acting in the app in front" : "mac: cua-driver not answering — Mac apps off (run hermes computer-use doctor)"));
+  else console.log("mac: off");
 
   // Only our own renderer gets the microphone.
   if (!process.env.JEV_DEBUG_NO_PERM) {

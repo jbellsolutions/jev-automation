@@ -104,6 +104,8 @@ export function defaultExpectation(a: Action): string {
       return "the page reloaded";
     case "open_app":
       return `${a.app} is running and in front`;
+    case "open_path":
+      return `the file ${a.query} is open`;
     case "stop":
     case "none":
       return "nothing needed to happen";
@@ -157,6 +159,7 @@ export function quickVerdict(s: VerifyState, a: Action): VerifyResult | null {
     case "scroll":
     case "stop":
     case "open_app":
+    case "open_path":
     case "none":
       return verdict(true, false, "none", "code");
     case "type":

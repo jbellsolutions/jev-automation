@@ -271,6 +271,8 @@ export class PlaywrightExecutor implements Executor {
         return "Stopped";
       case "open_app":
         throw new Error(`The browser can't open ${action.app}`);
+      case "open_path":
+        throw new Error(`The browser can't open files (${action.query})`);
       case "none":
         return action.reason;
     }

@@ -11,12 +11,12 @@ import { knownSiteUrl } from "./commands.js";
 
 export const ROUTES = {
   browser_now: {
-    what: "An obvious, single, immediate action on the web page that is open right now, or a plain web search: open a named site, click or press something visible, type into a field, scroll, go back, reload. Nothing that needs judgement, memory, an account, or more than one tool",
-    examples: ["click the pricing link", "open wikipedia and search for cats", "scroll down", "type hello in the search box", "google the weather in paris"],
+    what: "An obvious, single, immediate action on the web page or Mac app that is open in front right now, or a plain web search: open a named site, click or press something visible, type into a field, scroll, go back, reload. Nothing that needs judgement, memory, an account, or more than one tool",
+    examples: ["click the pricing link", "open wikipedia and search for cats", "scroll down", "type hello in the search box", "google the weather in paris", "click general"],
   },
   computer: {
-    what: "Launch or switch to a named application on this Mac (not a website, not a task inside the app)",
-    examples: ["open slack", "switch to finder", "launch textedit"],
+    what: "Launch or switch to a named application on this Mac, or open one of the user's files or folders by name (not a website, not a task inside the app)",
+    examples: ["open slack", "switch to finder", "launch textedit", "open my resume", "open the q3 budget spreadsheet"],
   },
   hermes: {
     what: "Everything else, said to the assistant as a person: greetings and chit-chat, questions, anything about the user or their day, reminders, email, messages, calendar, files, research, writing, a to-do to carry out, anything needing judgement or memory, or anything not covered by the two lanes above",
@@ -48,6 +48,21 @@ export function appRequest(text: string): string | null {
   if (!m) return null;
   const name = m[1]!.trim();
   if (!MAC_APPS.includes(name) || knownSiteUrl(name)) return null;
+  return name;
+}
+
+const FILE_VERB = /^(?:open(?: up)?|show me|pull up|bring up|find)\s+(?:my|the|our)\s+(.+?)(?:\s+(?:file|document|doc|pdf|spreadsheet|sheet|presentation|deck|folder|directory|image|photo|picture|video|note))?$/;
+const NOT_A_FILE = /^(?:calendar|email|e-mail|mail|inbox|messages?|slack|browser|settings|desktop|screen|day|schedule|tasks?|todos?|to-dos?|notes app)$|\b(?:page|site|website|tab|link|section|menu|button|channel|thread|app)$/;
+
+/** "open my resume" -> "resume"; "open the q3 budget spreadsheet" -> "q3 budget". Null for apps,
+ *  sites and things that are not files ("open my calendar" is a task for the brain). */
+export function fileRequest(text: string): string | null {
+  const t = text.trim().toLowerCase().replace(/[.!?,]+$/, "");
+  if (appRequest(t)) return null;
+  const m = FILE_VERB.exec(t);
+  if (!m) return null;
+  const name = m[1]!.trim();
+  if (!name || NOT_A_FILE.test(name) || MAC_APPS.includes(name) || knownSiteUrl(name)) return null;
   return name;
 }
 
@@ -86,7 +101,7 @@ export function routeHeuristically(text: string, browserIntent: boolean): { rout
   const t = text.trim().toLowerCase();
   if (!t) return { route: "unclear", confidence: 0.9 };
   if (STOP.test(t)) return { route: "stop", confidence: 0.95 };
-  if (appRequest(t)) return { route: "computer", confidence: 0.85 };
+  if (appRequest(t) || fileRequest(t)) return { route: "computer", confidence: 0.85 };
   if (GREETING.test(t) || QUESTION.test(t) || TASK_VERB.test(t)) return { route: "hermes", confidence: 0.85 };
   if (browserIntent && !PERSONAL.test(t) && !TASK_ANYWHERE.test(t)) return { route: "browser_now", confidence: 0.75 };
   return { route: "hermes", confidence: 0.7 };
