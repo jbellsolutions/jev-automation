@@ -633,6 +633,20 @@ describe("Session: brain lane (Hermes)", () => {
     expect(noMac.brain.sent).toEqual(["open slack"]);
   });
 
+  it("a chained app-open command runs both steps locally even with a brain configured", async () => {
+    // regression: deciding the whole joined string before splitting used to fail to extract
+    // an app name from the trailing clause, downgrade to the brain, and — since a brain is
+    // configured — send the ENTIRE utterance as one message, never opening Slack at all.
+    const { session, opened, brain, messages } = withBrain({ computer: true });
+    const r = await session.command("open slack and click general");
+    expect(opened).toEqual(["slack"]);
+    expect(brain.sent).toEqual([]); // never lumped into one brain message
+    expect(messages.some((m) => m.type === "steps")).toBe(true);
+    expect(r.steps).toHaveLength(2);
+    expect(r.steps[0]!.decision).toMatchObject({ route: "computer", action: { kind: "open_app", app: "slack" } });
+    expect(r.steps[1]!.decision).not.toBeNull(); // step 2 gets its own fresh decision, not swallowed
+  });
+
   it("opens a file by name: one match opens, a few become a question, none go to the brain", async () => {
     const one = withBrain({ computer: true, files: { resume: ["/Users/j/Documents/Resume 2026.pdf"] } });
     const r = await one.session.command("open my resume");

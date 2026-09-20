@@ -75,6 +75,14 @@ describe("route: keyword mirror", () => {
     expect(appRequest("open my resume")).toBeNull();
   });
 
+  it("appRequest tolerates ordinary speech-to-text artifacts around the app name", () => {
+    expect(appRequest("open slack for me")).toBe("slack");
+    expect(appRequest("open slack real quick")).toBe("slack");
+    expect(appRequest("open slacks")).toBe("slack"); // plural mis-hear
+    expect(appRequest("open, slack")).toBe("slack"); // STT-inserted comma pause
+    expect(appRequest("opens lack")).toBeNull(); // fully-merged mis-hear: no safe regex fix, left to better transcription
+  });
+
   it("routeHeuristically prefers a page verb over the length rule", () => {
     expect(routeHeuristically("type hello world in the search box and press enter", true).route).toBe("browser_now");
     expect(routeHeuristically("um so anyway", false).route).toBe("hermes"); // unknown speech goes to the brain, which can ask back

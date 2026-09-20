@@ -231,6 +231,7 @@ function applyRoute(d: Decision, route: Route, confidence: number, parsed: Parse
       d.clarify = null;
     } else {
       d.route = "hermes";
+      d.meta.fallbackReason ??= `computer route but no app/file matched in "${parsed.text}"`;
     }
   } else if (route === "stop") {
     d.intent = "stop";

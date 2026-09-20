@@ -40,15 +40,22 @@ export const MAC_APPS = [
   "powerpoint", "outlook", "teams", "whatsapp", "telegram", "signal", "1password", "docker", "postman", "warp", "claude", "chatgpt",
 ];
 
-const APP_VERB = /^(?:open(?: up)?|launch|start|switch to|go to|bring up|show me|focus)\s+(?:the\s+)?(?:app\s+)?(.+?)(?:\s+app)?$/;
+const APP_VERB = /^(?:open(?: up)?|launch|start|switch to|go to|bring up|show me|focus),?\s+(?:the\s+)?(?:app\s+)?(.+?)(?:\s+app)?$/;
+/** Trailing words a real request often carries that aren't part of the app's name — stripped
+ *  before the MAC_APPS lookup so "open slack for me"/"...real quick" still resolve. */
+const APP_TRAILING_FILLER = /\s+(?:for me|real quick|real fast|quickly|now)$/;
 
-/** "open slack" -> "slack"; null unless the target is a known Mac application. */
+/** "open slack" -> "slack"; null unless the target is a known Mac application. Tolerant of a
+ *  comma after the verb, trailing filler, and a plural mis-hear ("slacks" -> "slack") — all
+ *  ordinary speech-to-text artifacts, not different requests. */
 export function appRequest(text: string): string | null {
   const m = APP_VERB.exec(text.trim().toLowerCase());
   if (!m) return null;
-  const name = m[1]!.trim();
-  if (!MAC_APPS.includes(name) || knownSiteUrl(name)) return null;
-  return name;
+  const name = m[1]!.trim().replace(APP_TRAILING_FILLER, "").trim();
+  if (MAC_APPS.includes(name) && !knownSiteUrl(name)) return name;
+  const singular = name.replace(/s$/, "");
+  if (singular !== name && MAC_APPS.includes(singular) && !knownSiteUrl(singular)) return singular;
+  return null;
 }
 
 const FILE_VERB = /^(?:open(?: up)?|show me|pull up|bring up|find)\s+(?:my|the|our)\s+(.+?)(?:\s+(?:file|document|doc|pdf|spreadsheet|sheet|presentation|deck|folder|directory|image|photo|picture|video|note))?$/;

@@ -5,7 +5,7 @@
 import { type Action, describeAction } from "./actions.js";
 import { type ApprovalChoice, type Brain, type BrainRun, approvalChoice } from "./brain.js";
 import { parseOrdinal, splitSteps } from "./commands.js";
-import { isResetCommand, isSleepCommand, isStopWord } from "./route.js";
+import { appRequest, fileRequest, isResetCommand, isSleepCommand, isStopWord } from "./route.js";
 import type { Decider, Decision } from "./decide.js";
 import type { PageSnapshot } from "./elements.js";
 import type { Executor } from "./executor.js";
@@ -549,12 +549,19 @@ export class Session {
     if (commands.length === 0) return this.finish([]);
     if (commands.length > 1) {
       // route the whole utterance first: "find 20 dentists and put them in a sheet" is one
-      // task for the brain, not two browser steps
-      const decision = await this.decide(trimmed, null);
-      if (decision && !this.fastLane(decision)) {
-        const step = this.ack(trimmed);
-        this.announce(step, decision);
-        return this.finish([await this.runStep(step, this.awaitVerify ? "blocking" : "async", decision, trimmed)]);
+      // task for the brain, not two browser steps — but skip this pre-check when the utterance
+      // starts with an obvious app/file open ("open slack and click general"): deciding on the
+      // whole joined string would fail to extract an app name from the trailing clause, and
+      // even a correct "computer" decision on the combined text runs it as ONE step, silently
+      // dropping everything after "and" (fastLane() always treats "computer" as non-splittable).
+      const opensAppOrFile = !!appRequest(commands[0]!) || !!fileRequest(commands[0]!);
+      if (!opensAppOrFile) {
+        const decision = await this.decide(trimmed, null);
+        if (decision && !this.fastLane(decision)) {
+          const step = this.ack(trimmed);
+          this.announce(step, decision);
+          return this.finish([await this.runStep(step, this.awaitVerify ? "blocking" : "async", decision, trimmed)]);
+        }
       }
       this.emit({ type: "steps", original: trimmed, commands });
     }
