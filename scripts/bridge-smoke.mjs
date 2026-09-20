@@ -27,8 +27,9 @@ try {
   if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 15000 });
   const id = new URL(worker.url()).host;
   console.log(`extension ${id} loaded`);
-  // configure the bridge the way the options page would (the worker may be restarting: retry)
-  for (let attempt = 0; ; attempt++) {
+  // configure the bridge the way the options page would (the worker may be restarting: retry);
+  // SMOKE_PAIRING=config skips this and relies on the config.json the build wrote
+  for (let attempt = 0; process.env.SMOKE_PAIRING !== "config"; attempt++) {
     try {
       worker = context.serviceWorkers().find((w) => w.url().includes(id)) ?? worker;
       await worker.evaluate(async ({ url, token }) => chrome.storage.local.set({ url, token }), { url: `ws://127.0.0.1:${port}/ws/bridge`, token });

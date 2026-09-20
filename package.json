@@ -20,7 +20,7 @@
     "stt:smoke": "tsx scripts/stt-smoke.ts",
     "build:app": "node scripts/build-app.mjs",
     "voice:test": "node --import tsx scripts/voice-test.mjs",
-    "build:extension": "node scripts/build-extension.mjs",
+    "build:extension": "node --import tsx scripts/build-extension.mjs",
     "bridge:smoke": "node --import tsx scripts/bridge-smoke.mjs",
     "app": "npm run build && npm run build:app && electron .",
     "app:run": "electron .",

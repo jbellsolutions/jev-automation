@@ -14,9 +14,19 @@ let socket: WebSocket | null = null;
 let attempts = 0;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
+/** Where the companion is. Saved settings win; otherwise config.json, which the build writes
+ *  next to this file from the companion's own .env, so loading the folder is all the pairing
+ *  there is (nothing to type). */
 async function settings(): Promise<{ url: string; token: string }> {
   const stored = (await chrome.storage.local.get(["url", "token"])) as Partial<typeof DEFAULTS>;
-  return { url: stored.url?.trim() || DEFAULTS.url, token: stored.token?.trim() || "" };
+  if (stored.url?.trim() || stored.token?.trim()) return { url: stored.url?.trim() || DEFAULTS.url, token: stored.token?.trim() || "" };
+  try {
+    const res = await fetch(chrome.runtime.getURL("config.json"));
+    const cfg = (await res.json()) as Partial<typeof DEFAULTS>;
+    return { url: cfg.url?.trim() || DEFAULTS.url, token: cfg.token?.trim() || "" };
+  } catch {
+    return { ...DEFAULTS };
+  }
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab | null> {
