@@ -94,6 +94,35 @@ off limits to extensions, so switch to a normal tab first.
 `npm run bridge:smoke -- "open wikipedia and search for cats"` proves the whole path in a
 throwaway Chromium without touching your profile.
 
+### The Mac itself (Hermes computer use)
+
+Anything outside the browser — the desktop, native apps, files — is Hermes' job through its
+`computer_use` tool (Cua's `cua-driver`, macOS). Two things Hermes' defaults do not do for you:
+
+1. `hermes computer-use install`, then grant **CuaDriver** both *Accessibility* and *Screen &
+   System Audio Recording* in System Settings → Privacy & Security. Check with
+   `cua-driver call check_permissions` — the daemon must be the one reporting (launch it with
+   `open -g -a CuaDriver --args serve`; run from a shell, macOS attributes the grant to the shell).
+2. Hermes' built-in `hermes-api-server` toolset (what this companion talks to) deliberately
+   leaves out `computer_use`. Give the API server its own list in `~/.hermes/config.yaml` —
+   the `cli` list minus `clarify` and `tts` (Hermes writes the words, this companion speaks
+   them) — then `hermes gateway restart`:
+
+   ```yaml
+   platform_toolsets:
+     api_server:
+       - browser
+       - computer_use
+       - file
+       - terminal
+       - web
+       - vision
+       # …the rest of your cli list, without clarify and tts
+   ```
+
+   `GET /v1/toolsets` on the API server shows `computer_use` with `enabled: true` when it took.
+   The gateway checks tool availability when it starts, so restart it after installing the driver.
+
 ## Project layout
 
 ```
