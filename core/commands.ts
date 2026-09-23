@@ -86,6 +86,15 @@ export function toUrl(candidate: string): string {
   return `https://${candidate}`;
 }
 
+/** normalizeSpeech lowercases everything, but a URL's path and query are case-sensitive (a
+ *  YouTube id, a signed link). Take the URL back from the raw text when it is there verbatim,
+ *  as it is whenever it was typed rather than spoken. */
+function withRawCase(span: string, raw: string): string {
+  const at = raw.toLowerCase().indexOf(span);
+  const original = at >= 0 ? raw.slice(at, at + span.length) : "";
+  return original.toLowerCase() === span ? original : span;
+}
+
 const NAV_VERB =
   /^(?:go to|goto|go on|go on to|open up|open|navigate to|visit|launch|take me to|show me|bring up|head to|head over to|load|pull up|switch to)\s+(?:the\s+)?(?:website|site|web page|webpage|page|url|homepage|home page)?\s*(?:of\s+|for\s+|called\s+|at\s+)?(.+)$/i;
 
@@ -213,7 +222,7 @@ export interface ParsedCommand {
 
 export function parseCommand(raw: string): ParsedCommand {
   const text = normalizeSpeech(raw);
-  const urls = findUrlCandidates(text).map(toUrl);
+  const urls = findUrlCandidates(text).map((span) => toUrl(withRawCase(span, raw)));
   const navTarget = navigationTarget(text);
   const siteGuess = navTarget && urls.length === 0 ? guessSiteUrl(navTarget) : null;
   return {
@@ -293,5 +302,6 @@ export function splitSteps(raw: string, max = 4): string[] {
     out.push(seg);
   }
   if (out.length > max) out.splice(max - 1, out.length, out.slice(max - 1).join(" and "));
-  return out.map((s) => s.replaceAll(MASK, " "));
+  // each step is decided from its own (lowercased) text, so put the URLs' case back here
+  return out.map((s) => s.replaceAll(MASK, " ").replace(URL_RE, (span) => withRawCase(span, raw)));
 }

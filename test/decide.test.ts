@@ -1,7 +1,7 @@
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { describe, expect, it } from "vitest";
 import { parseCommand } from "../core/commands.js";
-import { HeuristicDecider, JevDecider, THRESHOLDS, buildQuestions, decideHeuristically, interpretAnswers } from "../core/decide.js";
+import { HeuristicDecider, JevDecider, THRESHOLDS, buildQuestions, decideHeuristically, explicitNavigation, interpretAnswers } from "../core/decide.js";
 import type { PageElement, PageSnapshot } from "../core/elements.js";
 
 const el = (id: string, over: Partial<PageElement>): PageElement => ({
@@ -168,10 +168,19 @@ describe("JevDecider", () => {
 
   it("falls back to heuristics when the API fails", async () => {
     const client = new TypeSafeClient({ apiKey: "k", retry: { maxRetries: 0 }, fetch: async () => new Response("{}", { status: 500 }) });
-    const d = await new JevDecider(client).decide("open github.com", snapshot);
+    const d = await new JevDecider(client).decide("click on pricing", snapshot);
     expect(d.source).toBe("heuristic");
-    expect(d.action).toEqual({ kind: "navigate", url: "https://github.com" });
+    expect(d.action).toMatchObject({ kind: "click", elementId: "e2" });
     expect(d.meta.fallbackReason).toBeTruthy();
+  });
+
+  it("opens a URL named outright without asking Jev, case intact", async () => {
+    let calls = 0;
+    const client = new TypeSafeClient({ apiKey: "k", retry: { maxRetries: 0 }, fetch: async () => (calls++, new Response("{}", { status: 500 })) });
+    const d = await new JevDecider(client).decide("open https://www.youtube.com/watch?v=dQw4w9WgXcQ", snapshot);
+    expect(calls).toBe(0);
+    expect(d.action).toEqual({ kind: "navigate", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    expect(d.route).toBe("browser_now");
   });
 
   it("classifies confirmation replies with regex first, Jev second", async () => {
@@ -190,5 +199,19 @@ describe("HeuristicDecider", () => {
     expect(h.enabled).toBe(false);
     expect(await h.classifyReply("cancel")).toBe("cancel");
     expect(await h.classifyReply("open x.com")).toBe("other");
+  });
+});
+
+describe("explicitNavigation", () => {
+  it("is the URL when the URL is the whole target", () => {
+    const exploit = "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions";
+    expect(explicitNavigation(parseCommand(`open ${exploit}`))).toBe(exploit);
+    expect(explicitNavigation(parseCommand("go to example.com"))).toBe("https://example.com");
+  });
+  it("leaves anything more than a bare URL to Jev", () => {
+    expect(explicitNavigation(parseCommand("open the pricing page on example.com"))).toBeNull();
+    expect(explicitNavigation(parseCommand("click the example.com link"))).toBeNull();
+    expect(explicitNavigation(parseCommand("open pricing"))).toBeNull();
+    expect(explicitNavigation(parseCommand("open example.com or github.com"))).toBeNull();
   });
 });

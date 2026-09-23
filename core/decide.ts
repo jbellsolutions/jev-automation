@@ -9,7 +9,7 @@
 import { type ChoiceCriteria, type Questions, type SystemOneResult, TypeSafeClient, choice, noul } from "@typesafe-ai/sdk";
 import type { Action, ScrollDirection } from "./actions.js";
 import { describeAction } from "./actions.js";
-import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo } from "./commands.js";
+import { type ParsedCommand, knownSiteUrl, parseCommand, parseYesNo, toUrl } from "./commands.js";
 import { NONE_OPTION, type PageElement, type PageSnapshot, describeElement, elementCriteria } from "./elements.js";
 import { FAST_LANE_THRESHOLD, ROUTES, ROUTE_THRESHOLD, type Route, appRequest, fileRequest, reconcileRoute, routeHeuristically } from "./route.js";
 import { type VerifyInput, type VerifyResult, buildVerifyQuestions, buildVerifyState, heuristicVerdict, interpretVerifyAnswers, quickVerdict } from "./verify.js";
@@ -184,6 +184,21 @@ function textAfterVerb(parsed: ParsedCommand): string {
   return parsed.text.replace(/^(?:type|enter|write|input|put|say|search for|search|look up|google|find)\s+/, "").trim();
 }
 
+/** The URL an "open <url>" command names outright, when that URL is the whole target. There is
+ *  nothing for Jev to weigh there, and on a page with one prominent link it has picked the link
+ *  instead of the URL (2026-09-23). "open the pricing page on example.com" is not this. */
+export function explicitNavigation(parsed: ParsedCommand): string | null {
+  const [url, ...more] = parsed.urls;
+  if (!url || more.length > 0 || !parsed.navTarget) return null;
+  return toUrl(parsed.navTarget).toLowerCase() === url.toLowerCase() ? url : null;
+}
+
+function navigateTo(parsed: ParsedCommand, url: string): Decision {
+  const d = base(parsed, "open_url", 1, "heuristic", { kind: "navigate", url });
+  d.routeConfidence = 1;
+  return d;
+}
+
 function base(parsed: ParsedCommand, intent: DecisionIntent, intentConfidence: number, source: Decision["source"], action: Action): Decision {
   return {
     command: parsed.text,
@@ -351,6 +366,8 @@ export function matchElements(label: string, elements: PageElement[], fieldsOnly
 }
 
 export function decideHeuristically(parsed: ParsedCommand, snapshot: PageSnapshot): Decision {
+  const direct = explicitNavigation(parsed);
+  if (direct) return navigateTo(parsed, direct);
   const d = decideBrowserHeuristically(parsed, snapshot);
   const r = routeHeuristically(parsed.text, d.intent !== "unclear" && d.intent !== "stop");
   // "open the documentation" with a Documentation link in front is that link, not a file search
@@ -464,6 +481,8 @@ export class JevDecider implements Decider {
 
   async decide(raw: string, snapshot: PageSnapshot, signal?: AbortSignal): Promise<Decision> {
     const parsed = parseCommand(raw);
+    const direct = explicitNavigation(parsed);
+    if (direct) return navigateTo(parsed, direct);
     const t0 = performance.now();
     try {
       const res = await this.client.systemOne({ state: buildState(parsed, snapshot), questions: buildQuestions(parsed, snapshot) }, { signal, timeout: 8000 });

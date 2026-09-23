@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { splitSteps } from "../core/commands.js";
 
 describe("splitSteps", () => {
+  it("keeps each URL's case: the decider sees the step, not the original", () => {
+    expect(splitSteps("open https://www.youtube.com/watch?v=dQw4w9WgXcQ and scroll down")).toEqual(["open https://www.youtube.com/watch?v=dQw4w9WgXcQ", "scroll down"]);
+    expect(splitSteps("Open https://Example.com/Docs")).toEqual(["open https://Example.com/Docs"]);
+  });
   it.each([
     ["open wikipedia and search for cats", ["open wikipedia", "search for cats"]],
     ["open wikipedia and then search for cats", ["open wikipedia", "search for cats"]],

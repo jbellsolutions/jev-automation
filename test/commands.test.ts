@@ -101,6 +101,10 @@ describe("parseCommand", () => {
     expect(p.navTarget).toBe("google.com");
     expect(p.siteGuess).toBeNull();
   });
+  it("keeps a typed URL's case: paths and queries are case-sensitive", () => {
+    expect(parseCommand("open https://www.youtube.com/watch?v=dQw4w9WgXcQ").urls).toEqual(["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]);
+    expect(parseCommand("Go to Example.com/Docs/API").urls).toEqual(["https://Example.com/Docs/API"]);
+  });
   it("guesses a site only when no URL was spoken", () => {
     expect(parseCommand("go to reddit").siteGuess).toBe("https://www.reddit.com");
   });
