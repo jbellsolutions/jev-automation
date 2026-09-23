@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { splitSteps } from "../core/commands.js";
 
 describe("splitSteps", () => {
+  it("keeps the case of quoted text, which is typed verbatim", () => {
+    expect(splitSteps("type 'Test User' into the name field then type 'X-1' into the code field")).toEqual([
+      "type 'Test User' into the name field",
+      "type 'X-1' into the code field",
+    ]);
+  });
   it("keeps each URL's case: the decider sees the step, not the original", () => {
     expect(splitSteps("open https://www.youtube.com/watch?v=dQw4w9WgXcQ and scroll down")).toEqual(["open https://www.youtube.com/watch?v=dQw4w9WgXcQ", "scroll down"]);
     expect(splitSteps("Open https://Example.com/Docs")).toEqual(["open https://Example.com/Docs"]);
@@ -72,5 +78,12 @@ describe("splitSteps", () => {
     expect(literals.size).toBeGreaterThan(5);
     const multi = [...literals].filter((l) => splitSteps(l).length !== 1);
     expect(multi).toEqual([]);
+  });
+});
+
+describe("parseCommand typed text", () => {
+  it("types what was said, in its own case", async () => {
+    const { parseCommand } = await import("../core/commands.js");
+    expect(parseCommand("type 'Test User' into the customer name field").typed?.text).toBe("Test User");
   });
 });

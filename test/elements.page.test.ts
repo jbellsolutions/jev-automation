@@ -44,6 +44,15 @@ describe("PAGE_SCRIPT in a real DOM", () => {
     expect(els).toHaveLength(4);
   }, 15000);
 
+  it("knows an unlabelled tick box by its row, so each row's box is its own option", async () => {
+    const els = await extractFrom(`
+      <ul><li><input type="checkbox"><label>buy milk</label><button aria-label="Delete"></button></li>
+      <li><input type="checkbox" checked><label>walk dog</label><button aria-label="Delete"></button></li></ul>
+    `);
+    const descs = els.map(describeElement);
+    expect(descs).toEqual(expect.arrayContaining(['checkbox "buy milk"', 'checkbox "walk dog" [checked]']));
+  }, 15000);
+
   it("still leaves text empty for real fields and keeps placeholder/label", async () => {
     const els = await extractFrom(`
       <label for="q">Search</label><input id="q" type="search" placeholder="Search the site">

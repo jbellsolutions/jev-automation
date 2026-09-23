@@ -220,6 +220,11 @@ export interface ParsedCommand {
   scroll: "up" | "down" | "top" | "bottom" | null;
 }
 
+/** What to type is typed as said: "type 'Test User'" must not become "test user". */
+function withTypedCase(typed: TypedText | null, raw: string): TypedText | null {
+  return typed ? { ...typed, text: withRawCase(typed.text, raw) } : null;
+}
+
 export function parseCommand(raw: string): ParsedCommand {
   const text = normalizeSpeech(raw);
   const urls = findUrlCandidates(text).map((span) => toUrl(withRawCase(span, raw)));
@@ -232,7 +237,7 @@ export function parseCommand(raw: string): ParsedCommand {
     navTarget,
     siteGuess,
     searchQuery: extractSearchQuery(text),
-    typed: extractTypedText(text),
+    typed: withTypedCase(extractTypedText(text), raw),
     clickLabel: clickTarget(text),
     scroll: parseScrollDirection(text),
   };
@@ -303,5 +308,10 @@ export function splitSteps(raw: string, max = 4): string[] {
   }
   if (out.length > max) out.splice(max - 1, out.length, out.slice(max - 1).join(" and "));
   // each step is decided from its own (lowercased) text, so put the URLs' case back here
-  return out.map((s) => s.replaceAll(MASK, " ").replace(URL_RE, (span) => withRawCase(span, raw)));
+  return out.map((s) =>
+    s
+      .replaceAll(MASK, " ")
+      .replace(URL_RE, (span) => withRawCase(span, raw))
+      .replace(/(["'“‘])(.+?)(["'”’])/g, (span) => withRawCase(span, raw)),
+  );
 }

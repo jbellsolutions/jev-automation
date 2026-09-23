@@ -37,7 +37,11 @@ export const PAGE_SCRIPT = String.raw`(max) => {
     const labelledBy = el.getAttribute("aria-labelledby");
     const labelledByText = labelledBy ? clean(document.getElementById(labelledBy)?.textContent, 80) : "";
     const htmlLabel = el.labels && el.labels[0] ? el.labels[0].innerText : "";
-    const label = clean(el.getAttribute("aria-label") || labelledByText || htmlLabel || el.getAttribute("title") || el.getAttribute("alt") || (el.querySelector("img") || {}).alt, 80);
+    const ownLabel = clean(el.getAttribute("aria-label") || labelledByText || htmlLabel || el.getAttribute("title") || el.getAttribute("alt") || (el.querySelector("img") || {}).alt, 80);
+    // an unlabelled field in a list row (a to-do's tick box) is known by its row's text, which
+    // also keeps one row's box from being deduped away as a copy of another's
+    const row = !ownLabel && isField && !el.getAttribute("placeholder") ? el.closest("li, tr, [role=row], [role=listitem]") : null;
+    const label = ownLabel || (row ? clean(row.innerText, 80) : "");
     const text = isField ? "" : clean(el.innerText || el.textContent, 80) || clean(value, 80);
     const placeholder = clean(el.getAttribute("placeholder"), 60);
     const name = clean(el.getAttribute("name"), 40);
