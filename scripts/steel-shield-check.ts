@@ -2,6 +2,10 @@
 // or a click can take must be refused, and ordinary browsing must still work. Deterministic —
 // it drives the executor directly, no Jev decisions. Needs Steel on CDP_URL (default below).
 //   npx tsx scripts/steel-shield-check.ts
+// JEV_SHIELD=off turns this executor's own guard off, to prove that a browser-wide guard
+// (browser-box's gateway) refuses every case on its own. GUARD_SETTLE_MS then gives that guard
+// time to reattach after the Steel relaunches this script causes; the gateway itself holds its
+// lane until it has.
 import { chromium } from "playwright";
 import { PlaywrightExecutor, dialable } from "../server/executors/playwright.js";
 
@@ -14,7 +18,7 @@ const ex = new PlaywrightExecutor({
   deviceScaleFactor: 1,
   jpegQuality: 60,
   cdpUrl: cdp,
-  blockPrivateNetwork: true,
+  blockPrivateNetwork: process.env.JEV_SHIELD !== "off",
 });
 
 const results: { name: string; pass: boolean; detail: string }[] = [];
@@ -57,11 +61,13 @@ async function allowedCase(name: string, url: string, expectHost: RegExp) {
 }
 
 const steel = process.env.STEEL_URL ?? "http://127.0.0.1:3000";
+const settle = () => new Promise((r) => setTimeout(r, Number(process.env.GUARD_SETTLE_MS ?? 0)));
 // Start from a fresh Chromium: creating and releasing a session relaunches it, dropping tabs
 // that earlier runs left behind (an attached close() never closes tabs).
 {
   const s = (await (await fetch(`${steel}/v1/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json()) as { id: string };
   await fetch(`${steel}/v1/sessions/${s.id}/release`, { method: "POST" });
+  await settle();
 }
 await ex.start();
 console.log("attached; start url:", page().url());
@@ -149,12 +155,14 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
   (ex as unknown as { attach: (u: string) => Promise<void> }).attach = (u) => (attaches++, attach(u));
   const created = (await (await fetch(`${steel}/v1/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json()) as { id: string };
   await new Promise((r) => setTimeout(r, 1500));
+  await settle();
   const t0 = Date.now();
   await Promise.all([ex.snapshot(), ex.snapshot(), ex.snapshot()]);
   results.push({ name: "reattach after Steel relaunch, one tab for a burst", pass: attaches === 1, detail: `${Date.now() - t0}ms, ${attaches} attach(es), now on ${page().url()}` });
   await blockedCase("redirect → Steel API, after reattach", "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions");
   await allowedCase("example.com, after reattach", "https://example.com", /example\.com/);
   await fetch(`${steel}/v1/sessions/${created.id}/release`, { method: "POST" });
+  await settle();
 }
 
 // The default context is shared with every other client of this browser. Their tabs are not
