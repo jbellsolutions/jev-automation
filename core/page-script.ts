@@ -41,6 +41,9 @@ export const PAGE_SCRIPT = String.raw`(max) => {
     const text = isField ? "" : clean(el.innerText || el.textContent, 80) || clean(value, 80);
     const placeholder = clean(el.getAttribute("placeholder"), 60);
     const name = clean(el.getAttribute("name"), 40);
+    // a tick changes no text, so without this a checkbox or radio click looks like no change
+    const ariaChecked = el.getAttribute("aria-checked");
+    const checked = tag === "input" && (type === "checkbox" || type === "radio") ? !!el.checked : ariaChecked === "true" ? true : ariaChecked === "false" ? false : null;
     let hrefShort = null;
     if (tag === "a") {
       const href = el.getAttribute("href") || "";
@@ -59,11 +62,11 @@ export const PAGE_SCRIPT = String.raw`(max) => {
     const item = {
       el, tag,
       role: clean(el.getAttribute("role"), 20).toLowerCase(),
-      type, text, label, placeholder, name, hrefShort,
+      type, text, label, placeholder, name, hrefShort, checked,
       inViewport: r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw,
       top: r.top, left: r.left,
     };
-    const desc = [item.tag, item.role, item.type, item.text, item.label, item.placeholder, item.hrefShort].join("|");
+    const desc = [item.tag, item.role, item.type, item.text, item.label, item.placeholder, item.hrefShort, item.checked].join("|");
     if (seenDesc.has(desc)) continue;
     seenDesc.add(desc);
     found.push(item);

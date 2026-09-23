@@ -25,6 +25,8 @@ export type VerifyState = {
   after: { url: string; title: string };
   url_changed: boolean;
   title_changed: boolean;
+  /** The page's visible text changed (false when either snapshot has no text digest). */
+  page_text_changed: boolean;
   new_elements: string[];
   gone_elements: string[];
   /** Dialogs the action popped, e.g. 'alert: Pro selected'. */
@@ -68,7 +70,7 @@ const MAX_GONE = 5;
 
 /** Identity of an element across snapshots: everything but its id and position. */
 export function elementKey(e: PageElement): string {
-  return [e.tag, e.role, e.type, e.text, e.label, e.placeholder, e.hrefShort ?? ""].join("|");
+  return [e.tag, e.role, e.type, e.text, e.label, e.placeholder, e.hrefShort ?? "", e.checked ?? ""].join("|");
 }
 
 function host(url: string): string {
@@ -125,6 +127,7 @@ export function buildVerifyState(i: VerifyInput): VerifyState {
     after: { url: i.after.url, title: i.after.title },
     url_changed: i.before.url !== i.after.url,
     title_changed: i.before.title !== i.after.title,
+    page_text_changed: !!i.before.textSignature && !!i.after.textSignature && i.before.textSignature !== i.after.textSignature,
     new_elements: fresh.slice(0, MAX_NEW).map(describeElement),
     gone_elements: gone.slice(0, MAX_GONE).map(describeElement),
     dialogs: i.after.dialogs ?? [],
@@ -176,7 +179,7 @@ export function quickVerdict(s: VerifyState, a: Action): VerifyResult | null {
 
 /** Without Jev: any change counts as progress, no change as stuck. */
 export function heuristicVerdict(s: VerifyState): VerifyResult {
-  const changed = s.url_changed || s.title_changed || s.new_elements.length > 0 || s.dialogs.length > 0;
+  const changed = s.url_changed || s.title_changed || s.page_text_changed || s.new_elements.length > 0 || s.gone_elements.length > 0 || s.dialogs.length > 0;
   return verdict(changed, !changed, changed ? "none" : "no_change", "heuristic");
 }
 

@@ -12,6 +12,8 @@ export interface PageElement {
   placeholder: string;
   name: string;
   hrefShort: string | null;
+  /** Checkbox, radio or aria-checked state; null (or absent) for anything else. */
+  checked?: boolean | null;
   inViewport: boolean;
 }
 
@@ -19,6 +21,9 @@ export interface PageSnapshot {
   url: string;
   title: string;
   elements: PageElement[];
+  /** A digest of the page's visible text. Lets a verify see changes the element list can't:
+   *  a second row identical to the first, a counter, a message. */
+  textSignature?: string;
   /** JavaScript dialogs (alert/confirm/prompt) shown since the previous snapshot, as
    *  "alert: message". They never appear in the DOM, so this is the only evidence of them. */
   dialogs?: string[];
@@ -91,6 +96,7 @@ export function describeElement(e: PageElement): string {
   if (e.label && e.text && e.label !== e.text) s += ` (${e.label})`;
   if (e.placeholder && primary !== e.placeholder) s += ` placeholder "${e.placeholder}"`;
   if (e.hrefShort) s += ` → ${e.hrefShort}`;
+  if (e.checked === true) s += " [checked]";
   if (!e.inViewport) s += " [off-screen]";
   return s;
 }

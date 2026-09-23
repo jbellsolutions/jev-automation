@@ -29,6 +29,11 @@ export interface PlaywrightOptions {
   blockPrivateNetwork?: boolean;
 }
 
+/** Length plus a 32-bit FNV-1a hash of the visible text: cheap, and enough to tell "changed". */
+const TEXT_SIGNATURE = `(() => { const t = document.body ? document.body.innerText : ""; let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return t.length + ":" + h.toString(16); })()`;
+
 export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, maxHeight: 1200 };
 
 /** Chromium's DevTools endpoint refuses a Host header that is neither an IP address nor
@@ -295,6 +300,11 @@ export class PlaywrightExecutor implements Executor {
       console.warn("element extraction failed:", err instanceof Error ? err.message.split("\n")[0] : err);
     }
     const snapshot: PageSnapshot = { url: page.url(), title: await this.title(), elements };
+    try {
+      snapshot.textSignature = String(await page.evaluate(TEXT_SIGNATURE));
+    } catch {
+      /* mid-navigation: leave it out, which reads as "unknown", not "unchanged" */
+    }
     if (this.dialogs.length > 0) {
       snapshot.dialogs = this.dialogs;
       this.dialogs = [];

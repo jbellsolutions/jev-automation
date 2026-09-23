@@ -22,6 +22,24 @@ describe("buildVerifyState", () => {
     expect(s.action_taken).toBe('Click button "Next"');
   });
 
+  it("a ticked checkbox or radio is a change, and is described as checked", () => {
+    const radio = (checked: boolean) => el("e3", { tag: "input", type: "radio", label: "Medium", checked });
+    const s = buildVerifyState({ command: "click medium", expectation: null, action: click, before: page("https://a.test/", [radio(false)]), after: page("https://a.test/", [radio(true)]), error: null });
+    expect(s.new_elements).toEqual(['radio button "Medium" [checked]']);
+    expect(s.gone_elements).toEqual(['radio button "Medium"']);
+    expect(heuristicVerdict(s)).toMatchObject({ done: true, stuck: false });
+  });
+
+  it("a text change the element list can't show (a second identical row) still counts", () => {
+    const at = (textSignature: string): PageSnapshot => ({ ...page("https://a.test/"), textSignature });
+    const s = buildVerifyState({ command: "add walk dog", expectation: null, action: click, before: at("20:ab"), after: at("29:cd"), error: null });
+    expect(s.page_text_changed).toBe(true);
+    expect(heuristicVerdict(s)).toMatchObject({ done: true, stuck: false });
+    const unknown = buildVerifyState({ command: "c", expectation: null, action: click, before: page("https://a.test/"), after: at("29:cd"), error: null });
+    expect(unknown.page_text_changed).toBe(false);
+    expect(heuristicVerdict(unknown)).toMatchObject({ stuck: true });
+  });
+
   it("elementKey ignores id and viewport", () => {
     expect(elementKey(el("e1", { text: "X", inViewport: false }))).toBe(elementKey(el("e9", { text: "X", inViewport: true })));
   });
