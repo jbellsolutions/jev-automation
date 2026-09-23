@@ -34,7 +34,7 @@ export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, 
 /** Chromium's DevTools endpoint refuses a Host header that is neither an IP address nor
  *  localhost (its DNS-rebinding guard), and Steel passes ours through. So a compose service name
  *  like ws://steel:3000/ is dialled by its address, looked up afresh on every attach. */
-async function dialable(cdpUrl: string): Promise<string> {
+export async function dialable(cdpUrl: string): Promise<string> {
   const url = new URL(cdpUrl);
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (isIP(host) || host === "localhost") return cdpUrl;
@@ -56,6 +56,9 @@ export class PlaywrightExecutor implements Executor {
   /** Dialogs seen since the last snapshot; drained by snapshot(). */
   private dialogs: string[] = [];
   private readonly adopted = new WeakSet<Page>();
+  /** Tabs that are ours: the ones we opened and their popups. Attached, the context also holds
+   *  other clients' tabs, which are never switched to or closed. */
+  private readonly owned = new Set<Page>();
   private closing = false;
   /** True when attached over CDP: the browser belongs to someone else and must outlive us. */
   private attached = false;
@@ -90,6 +93,7 @@ export class PlaywrightExecutor implements Executor {
     // the context's "page" event also fires for pages we created ourselves
     if (this.adopted.has(p)) return;
     this.adopted.add(p);
+    this.owned.add(p);
     void this.shield(p).catch(() => {});
     const notify = () => this.emitChange();
     p.on("load", notify);
@@ -103,8 +107,9 @@ export class PlaywrightExecutor implements Executor {
       notify();
     });
     p.on("close", () => {
+      this.owned.delete(p);
       if (this.page !== p || this.closing) return;
-      const rest = this.context?.pages().filter((x) => !x.isClosed()) ?? [];
+      const rest = [...this.owned].filter((x) => !x.isClosed());
       const next = rest[rest.length - 1];
       if (next) this.page = next;
       else void this.context?.newPage().then((np) => this.adopt(np)).catch(() => {});
@@ -138,6 +143,13 @@ export class PlaywrightExecutor implements Executor {
     const page = await this.context.newPage();
     await this.shield(page);
     this.adopt(page);
+  }
+
+  /** The default context is shared: other clients of the same browser (a browser agent, a
+   *  person in DevTools) open tabs there too. Only popups of our own tabs are ours to follow. */
+  private async adoptIfOurs(p: Page): Promise<void> {
+    const opener = await p.opener().catch(() => null);
+    if (opener && this.owned.has(opener)) this.adopt(p);
   }
 
   /** The one attach in flight, shared by start() and every reconnect, so a command that
@@ -180,7 +192,7 @@ export class PlaywrightExecutor implements Executor {
     // The default context carries the remote session's cookies and profile; a fresh context
     // would throw those away, and with them any login done through that session.
     this.context = this.browser.contexts()[0] ?? (await this.browser.newContext());
-    this.context.on("page", (p) => this.adopt(p));
+    this.context.on("page", (p) => void this.adoptIfOurs(p));
     // Our own tab, so other clients of the same browser (a REST scrape) never share it.
     const page = await this.context.newPage();
     await page.setViewportSize(this.options.viewport);
@@ -409,10 +421,17 @@ export class PlaywrightExecutor implements Executor {
 
   async close(): Promise<void> {
     this.closing = true;
-    // Attached: never close tabs, only disconnect. Closing a tab mid-navigation makes Steel's
-    // instrumentation reject unhandled, which kills the whole Steel server unless it runs with
-    // --unhandled-rejections=warn (reproduced 4/5, 2026-09-23). For a connected browser,
-    // Playwright's close() only clears contexts WE created and disconnects.
+    if (this.attached) {
+      // The browser is someone else's and outlives us; our tabs should not, or every restart
+      // leaves one behind in a memory-capped browser. Each is blanked first so none closes
+      // mid-navigation, which crashed Steel (4/5, 2026-09-23) before it ran with
+      // --unhandled-rejections=warn. Then close() on a connected browser only disconnects.
+      for (const p of this.owned) {
+        if (p.isClosed()) continue;
+        await p.goto("about:blank", { timeout: 3000 }).catch(() => {});
+        await p.close().catch(() => {});
+      }
+    }
     await this.browser?.close().catch(() => {});
     this.browser = this.context = this.page = null;
   }

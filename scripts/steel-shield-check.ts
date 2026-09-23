@@ -2,7 +2,10 @@
 // or a click can take must be refused, and ordinary browsing must still work. Deterministic —
 // it drives the executor directly, no Jev decisions. Needs Steel on CDP_URL (default below).
 //   npx tsx scripts/steel-shield-check.ts
-import { PlaywrightExecutor } from "../server/executors/playwright.js";
+import { chromium } from "playwright";
+import { PlaywrightExecutor, dialable } from "../server/executors/playwright.js";
+
+const cdp = process.env.CDP_URL ?? "ws://127.0.0.1:3000/";
 
 const ex = new PlaywrightExecutor({
   headless: true,
@@ -10,7 +13,7 @@ const ex = new PlaywrightExecutor({
   viewport: { width: 1280, height: 800 },
   deviceScaleFactor: 1,
   jpegQuality: 60,
-  cdpUrl: process.env.CDP_URL ?? "ws://127.0.0.1:3000/",
+  cdpUrl: cdp,
   blockPrivateNetwork: true,
 });
 
@@ -152,6 +155,28 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
   await blockedCase("redirect → Steel API, after reattach", "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions");
   await allowedCase("example.com, after reattach", "https://example.com", /example\.com/);
   await fetch(`${steel}/v1/sessions/${created.id}/release`, { method: "POST" });
+}
+
+// The default context is shared with every other client of this browser. Their tabs are not
+// ours: never switched to, never closed. Ours all go when the executor closes, or each restart
+// would leave one behind in a memory-capped browser.
+{
+  await ex.snapshot(); // reattach: the release above relaunched Chromium too
+  await nav("https://example.com");
+  const other = await chromium.connectOverCDP(await dialable(cdp));
+  const ctx = other.contexts()[0]!;
+  const mine = page();
+  const theirs = await ctx.newPage();
+  await theirs.goto("https://example.com").catch(() => {});
+  await new Promise((r) => setTimeout(r, 500));
+  results.push({ name: "another client's tab is never adopted", pass: page() === mine, detail: `active=${page().url()}` });
+  const before = ctx.pages().length;
+  await ex.close();
+  await new Promise((r) => setTimeout(r, 1000));
+  const after = ctx.pages().length;
+  results.push({ name: "close() takes our tab and leaves theirs", pass: after === before - 1 && !theirs.isClosed(), detail: `${before} → ${after} tabs, theirs still open: ${!theirs.isClosed()}` });
+  await theirs.close().catch(() => {});
+  await other.close();
 }
 
 for (const r of results) console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.name}\n      ${r.detail}`);
