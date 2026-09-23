@@ -47,7 +47,7 @@ describe("PAGE_SCRIPT in a real DOM", () => {
   it("knows an unlabelled tick box by its row, so each row's box is its own option", async () => {
     const els = await extractFrom(`
       <ul><li><input type="checkbox"><label>buy milk</label><button aria-label="Delete"></button></li>
-      <li><input type="checkbox" checked><label>walk dog</label><button aria-label="Delete"></button></li></ul>
+      <li><input type="checkbox" checked style="opacity:0"><label>walk dog</label><button aria-label="Delete"></button></li></ul>
     `);
     const descs = els.map(describeElement);
     expect(descs).toEqual(expect.arrayContaining(['checkbox "buy milk"', 'checkbox "walk dog" [checked]']));

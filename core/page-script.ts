@@ -20,7 +20,9 @@ export const PAGE_SCRIPT = String.raw`(max) => {
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) continue;
     const cs = window.getComputedStyle(el);
-    if (cs.visibility === "hidden" || cs.display === "none" || cs.opacity === "0" || cs.pointerEvents === "none") continue;
+    // a custom-drawn tick box is a real input at opacity 0 under its drawing: still clickable
+    const tick = el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio");
+    if (cs.visibility === "hidden" || cs.display === "none" || (cs.opacity === "0" && !tick) || cs.pointerEvents === "none") continue;
     if (el.closest('[aria-hidden="true"]')) continue;
     if (el.disabled) continue;
     // skip wrappers whose only content is another interactive element (a > button)
