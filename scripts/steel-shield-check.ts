@@ -135,6 +135,15 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
   results.push({ name: "page fetch() to loopback", pass: got.startsWith("fetch failed"), detail: `${got} | blocks=${ex.blocked.slice(before).join(" ; ").slice(0, 120)}` });
 }
 
+// A page decides how big a paused request is. A guard that drops its connection on an oversize
+// message is switched off by any page that asks, so the exploit must still be refused after one.
+{
+  await nav("https://example.com");
+  await page().evaluate(() => fetch("https://example.com/?" + "a".repeat(1_500_000), { mode: "no-cors" }).catch(() => {})).catch(() => {});
+  await page().waitForTimeout(1000);
+  await blockedCase("redirect → Steel API, after a 1.5 MB request", "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions");
+}
+
 // A popup that redirects inward: it starts loading before its own interceptor is up.
 {
   const before = ex.blocked.length;
