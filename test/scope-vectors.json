@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Canonical URL-scope vectors. The Python guard (gateway/gateway/security.py) and the",
+    "TypeScript guard (jev-automation core/scope.ts) must both classify every entry exactly",
+    "as written. jev-automation keeps a byte-identical copy at test/scope-vectors.json.",
+    "Change the two together or not at all."
+  ],
+  "vectors": [
+    ["https://example.com", "public_web"],
+    ["http://1.1.1.1", "public_web"],
+    ["https://news.ycombinator.com/news", "public_web"],
+    ["http://8.8.8.8:53/", "public_web"],
+    ["https://[2606:4700:4700::1111]/", "public_web"],
+
+    ["http://127.0.0.1", "loopback"],
+    ["http://0x7f000001/", "loopback"],
+    ["http://2130706433/", "loopback"],
+    ["http://127.1/", "loopback"],
+    ["http://0177.0.0.1/", "loopback"],
+    ["http://localhost:3000", "loopback"],
+    ["http://LOCALHOST./", "loopback"],
+    ["http://a.localhost/", "loopback"],
+    ["http://[::1]/", "loopback"],
+    ["http://[::ffff:127.0.0.1]/", "loopback"],
+
+    ["http://169.254.169.254/latest/meta-data/", "link_local"],
+    ["http://[fe80::1]/", "link_local"],
+
+    ["http://10.0.0.5", "private_network"],
+    ["http://192.168.1.1", "private_network"],
+    ["http://172.16.0.9", "private_network"],
+    ["http://100.64.0.1/", "private_network"],
+    ["http://steel:3000/", "private_network"],
+    ["http://gateway:8080/mcp", "private_network"],
+    ["http://db.internal/x", "private_network"],
+    ["http://printer.local/", "private_network"],
+    ["http://0.0.0.0/", "private_network"],
+    ["http://[fc00::1]/", "private_network"],
+    ["http://[::ffff:10.0.0.5]/", "private_network"],
+
+    ["file:///etc/passwd", "local_file"],
+
+    ["", "none"],
+    ["ftp://example.com", "none"],
+    ["javascript:alert(1)", "none"],
+    ["not a url", "none"]
+  ]
+}

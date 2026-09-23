@@ -2,6 +2,7 @@ import { type Browser, type BrowserContext, type Page, chromium } from "playwrig
 import type { Action } from "../../core/actions.js";
 import { type PageSnapshot, extractElements } from "../../core/elements.js";
 import type { Executor, ExecutorCapabilities } from "../../core/executor.js";
+import { createGuard } from "../../core/scope.js";
 
 export interface PlaywrightOptions {
   headless: boolean;
@@ -16,6 +17,14 @@ export interface PlaywrightOptions {
   deviceScaleFactor: number;
   /** JPEG quality of the streamed frames (1–100). */
   jpegQuality: number;
+  /** Attach to an already-running Chromium over CDP (e.g. a Steel browser server) instead of
+   *  launching one. That browser is not ours: we open our own tab in its default context, so
+   *  its cookies and profile apply, and close() only closes that tab and disconnects. */
+  cdpUrl?: string;
+  /** Refuse every request that is not the public web — loopback, private ranges, link-local,
+   *  cloud metadata, and names that resolve to any of those. For a browser on a server next to
+   *  other services. Off by default: a desktop companion legitimately opens localhost pages. */
+  blockPrivateNetwork?: boolean;
 }
 
 export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, maxHeight: 1200 };
@@ -34,25 +43,16 @@ export class PlaywrightExecutor implements Executor {
   private dialogs: string[] = [];
   private readonly adopted = new WeakSet<Page>();
   private closing = false;
+  /** True when attached over CDP: the browser belongs to someone else and must outlive us. */
+  private attached = false;
 
   constructor(readonly options: PlaywrightOptions, id = "playwright") {
     this.id = id;
   }
 
   async start(): Promise<void> {
-    try {
-      this.browser = await chromium.launch({
-        headless: this.options.headless,
-        executablePath: this.options.executablePath || undefined,
-        args: this.options.args ?? [],
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Could not launch Chromium. Run "npx playwright install chromium" or set CHROMIUM_EXECUTABLE_PATH.\n${msg}`);
-    }
-    this.context = await this.browser.newContext({ viewport: this.options.viewport, deviceScaleFactor: this.options.deviceScaleFactor });
-    this.context.on("page", (p) => this.adopt(p));
-    this.adopt(await this.context.newPage());
+    if (this.options.cdpUrl) await this.attach(this.options.cdpUrl);
+    else await this.launch();
     try {
       await this.goto(this.options.startUrl);
     } catch (err) {
@@ -76,6 +76,7 @@ export class PlaywrightExecutor implements Executor {
     // the context's "page" event also fires for pages we created ourselves
     if (this.adopted.has(p)) return;
     this.adopted.add(p);
+    void this.shield(p).catch(() => {});
     const notify = () => this.emitChange();
     p.on("load", notify);
     p.on("domcontentloaded", notify);
@@ -105,6 +106,90 @@ export class PlaywrightExecutor implements Executor {
 
   private emitChange(): void {
     for (const cb of this.changeListeners) cb();
+  }
+
+  private async launch(): Promise<void> {
+    try {
+      this.browser = await chromium.launch({
+        headless: this.options.headless,
+        executablePath: this.options.executablePath || undefined,
+        args: this.options.args ?? [],
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not launch Chromium. Run "npx playwright install chromium" or set CHROMIUM_EXECUTABLE_PATH.\n${msg}`);
+    }
+    this.context = await this.browser.newContext({ viewport: this.options.viewport, deviceScaleFactor: this.options.deviceScaleFactor });
+    this.context.on("page", (p) => this.adopt(p));
+    const page = await this.context.newPage();
+    await this.shield(page);
+    this.adopt(page);
+  }
+
+  /** Drive a browser someone else runs. One Chromium on the host instead of two is the whole
+   *  point: a second resident browser is what OOM-killed a 2 GB box before. */
+  private async attach(cdpUrl: string): Promise<void> {
+    try {
+      this.browser = await chromium.connectOverCDP(cdpUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not attach to the browser at ${cdpUrl}. Is it running?\n${msg}`);
+    }
+    this.attached = true;
+    // The default context carries the remote session's cookies and profile; a fresh context
+    // would throw those away, and with them any login done through that session.
+    this.context = this.browser.contexts()[0] ?? (await this.browser.newContext());
+    this.context.on("page", (p) => this.adopt(p));
+    // Our own tab, so other clients of the same browser (a REST scrape) never share it.
+    const page = await this.context.newPage();
+    await page.setViewportSize(this.options.viewport);
+    await this.shield(page); // before its first navigation, so nothing can race it
+    this.adopt(page);
+  }
+
+  /** Requests this guard refused, newest last; surfaced so a blocked click is explained. */
+  readonly blocked: string[] = [];
+
+  /** Guard each page with its own CDP Fetch interceptor, and why not Playwright's route():
+   *  route() lets redirect hops through without consulting its handler, so a public URL that
+   *  302s to 127.0.0.1 walked straight past it and read Steel's own session list (verified
+   *  2026-09-23). Chrome's Fetch domain pauses EVERY hop, redirects included. */
+  private readonly shielded = new WeakSet<Page>();
+  private check: ReturnType<typeof createGuard> | null = null;
+
+  private noteBlocked(url: string, reason?: string): void {
+    this.blocked.push(`${url} — ${reason ?? "not the public web"}`);
+    if (this.blocked.length > 20) this.blocked.shift();
+  }
+
+  private async shield(p: Page): Promise<void> {
+    if (!this.options.blockPrivateNetwork || !this.context || this.shielded.has(p)) return;
+    this.shielded.add(p);
+    const check = (this.check ??= createGuard());
+    const cdp = await this.context.newCDPSession(p);
+    cdp.on("Fetch.requestPaused", (e) => {
+      void check(e.request.url)
+        .then((verdict) => {
+          if (verdict.allowed) return cdp.send("Fetch.continueRequest", { requestId: e.requestId });
+          this.noteBlocked(e.request.url, verdict.reason);
+          return cdp.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "BlockedByClient" });
+        })
+        .catch(() => {});
+    });
+    await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+    // Backstop for the one race left: a popup can start loading before its interceptor is up.
+    // A main frame that lands anywhere private is taken off it at once, so nothing it shows is
+    // ever read back through this executor.
+    p.on("framenavigated", (f) => {
+      if (f !== p.mainFrame()) return;
+      const url = f.url();
+      if (!/^https?:/i.test(url)) return;
+      void check(url).then((verdict) => {
+        if (verdict.allowed) return;
+        this.noteBlocked(url, verdict.reason);
+        void p.goto("about:blank").catch(() => {});
+      });
+    });
   }
 
   private get active(): Page {
@@ -280,6 +365,10 @@ export class PlaywrightExecutor implements Executor {
 
   async close(): Promise<void> {
     this.closing = true;
+    // Attached: never close tabs, only disconnect. Closing a tab mid-navigation makes Steel's
+    // instrumentation reject unhandled, which kills the whole Steel server unless it runs with
+    // --unhandled-rejections=warn (reproduced 4/5, 2026-09-23). For a connected browser,
+    // Playwright's close() only clears contexts WE created and disconnects.
     await this.browser?.close().catch(() => {});
     this.browser = this.context = this.page = null;
   }

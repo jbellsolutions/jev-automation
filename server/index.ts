@@ -46,6 +46,10 @@ const playwright = new PlaywrightExecutor({
   viewport: { ...VIEWPORT },
   deviceScaleFactor: DEVICE_SCALE_FACTOR,
   jpegQuality: JPEG_QUALITY,
+  // Set to drive an existing browser (a Steel server) instead of launching our own Chromium.
+  cdpUrl: process.env.CDP_URL || undefined,
+  // Keep the browser on the public web. Set wherever it runs beside other services.
+  blockPrivateNetwork: process.env.JEV_BLOCK_PRIVATE === "1",
 });
 
 const mac = selectMac();
