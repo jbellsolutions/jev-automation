@@ -51,7 +51,7 @@ export class PlaywrightExecutor implements Executor {
   }
 
   async start(): Promise<void> {
-    if (this.options.cdpUrl) await this.attach(this.options.cdpUrl);
+    if (this.options.cdpUrl) await this.ensureAttached();
     else await this.launch();
     try {
       await this.goto(this.options.startUrl);
@@ -124,6 +124,33 @@ export class PlaywrightExecutor implements Executor {
     const page = await this.context.newPage();
     await this.shield(page);
     this.adopt(page);
+  }
+
+  /** The one attach in flight, shared by start() and every reconnect, so a command that
+   *  arrives mid-attach waits for it instead of opening a second tab. */
+  private connecting: Promise<void> | null = null;
+
+  /** Attached, the browser can vanish under us: Steel relaunches Chromium whenever a session
+   *  is created or released, dropping every CDP client (verified 2026-09-23). Reattach on the
+   *  next use rather than failing every command from then on. The new tab starts blank. */
+  private async ensureAttached(): Promise<void> {
+    const cdpUrl = this.options.cdpUrl;
+    if (!cdpUrl || this.closing) return;
+    if (this.connecting) return this.connecting;
+    if (this.browser?.isConnected()) return;
+    if (this.browser) console.warn(`lost the browser at ${cdpUrl} (it was restarted); reattaching`);
+    this.connecting = (async () => {
+      try {
+        await this.attach(cdpUrl);
+      } catch {
+        // a relaunch takes a moment; one more try before the command fails
+        await new Promise((r) => setTimeout(r, 1500));
+        await this.attach(cdpUrl);
+      }
+    })().finally(() => {
+      this.connecting = null;
+    });
+    return this.connecting;
   }
 
   /** Drive a browser someone else runs. One Chromium on the host instead of two is the whole
@@ -227,6 +254,7 @@ export class PlaywrightExecutor implements Executor {
   }
 
   async snapshot(): Promise<PageSnapshot> {
+    await this.ensureAttached();
     const page = this.active;
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 2000 });
@@ -255,6 +283,7 @@ export class PlaywrightExecutor implements Executor {
 
   async screenshot(): Promise<Buffer | null> {
     try {
+      await this.ensureAttached();
       return await this.active.screenshot({ type: "jpeg", quality: this.options.jpegQuality, timeout: 3000 });
     } catch {
       return null;
@@ -282,6 +311,7 @@ export class PlaywrightExecutor implements Executor {
 
   /** Perform an action and return a short status line for the UI. */
   async execute(action: Action): Promise<string> {
+    await this.ensureAttached();
     const page = this.active;
     switch (action.kind) {
       case "navigate":

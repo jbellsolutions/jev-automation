@@ -53,8 +53,39 @@ async function allowedCase(name: string, url: string, expectHost: RegExp) {
   results.push({ name, pass, detail: `${Date.now() - t0}ms out=${out.slice(0, 90)} | landed=${landed}` });
 }
 
+const steel = process.env.STEEL_URL ?? "http://127.0.0.1:3000";
+// Start from a fresh Chromium: creating and releasing a session relaunches it, dropping tabs
+// that earlier runs left behind (an attached close() never closes tabs).
+{
+  const s = (await (await fetch(`${steel}/v1/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json()) as { id: string };
+  await fetch(`${steel}/v1/sessions/${s.id}/release`, { method: "POST" });
+}
 await ex.start();
 console.log("attached; start url:", page().url());
+
+// Paths the Fetch interceptor may not see. Chromium's own Local Network Access check is expected
+// to stop these; the point is that nothing reaches Steel, whichever layer stops it. Runs first,
+// in one worker: under Steel only the first dedicated worker of a CDP connection gets network,
+// later ones hang even with no guard at all (bare Playwright client, 2026-09-23).
+{
+  await nav("https://example.com");
+  const got = (await page().evaluate(`(async () => {
+    const ws = await new Promise((res) => {
+      const s = new WebSocket("ws://127.0.0.1:3000/");
+      s.onopen = () => { s.close(); res("OPEN"); }; s.onerror = () => res("error"); setTimeout(() => res("timeout"), 4000);
+    });
+    const code = "fetch('https://example.com/', { mode: 'no-cors' }).then(() => 'sent', () => 'failed')" +
+      ".then(pub => fetch('http://127.0.0.1:3000/v1/sessions').then(r => r.text()).then(t => 'READ ' + t.slice(0, 40), () => 'failed')" +
+      ".then(loop => postMessage({ pub, loop })))";
+    const worker = await new Promise((res) => {
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+      w.onmessage = (m) => res(m.data); w.onerror = () => res({ pub: "worker error" }); setTimeout(() => res({ pub: "timeout" }), 8000);
+    });
+    return { ws, worker };
+  })()`)) as { ws: string; worker: { pub: string; loop?: string } };
+  results.push({ name: "WebSocket to Steel's CDP proxy", pass: got.ws !== "OPEN", detail: got.ws });
+  results.push({ name: "worker fetch to loopback (and the worker's own network works)", pass: got.worker.pub === "sent" && got.worker.loop !== undefined && !got.worker.loop.startsWith("READ"), detail: JSON.stringify(got.worker) });
+}
 
 await blockedCase("redirect → Steel API (the proven exploit)", "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions");
 await blockedCase("redirect → metadata", "https://httpbin.org/redirect-to?url=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2F");
@@ -78,7 +109,7 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
   results.push({ name: "click Learn more", pass: /iana\.org/.test(page().url()), detail: `${Date.now() - t0}ms ${out} | landed=${page().url()}` });
 }
 
-// Sub-resource from a public page, and a popup that redirects inward.
+// A sub-resource from a public page.
 {
   await nav("https://example.com");
   const before = ex.blocked.length;
@@ -94,6 +125,8 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
     .catch((e) => `evaluate threw ${e}`);
   results.push({ name: "page fetch() to loopback", pass: got.startsWith("fetch failed"), detail: `${got} | blocks=${ex.blocked.slice(before).join(" ; ").slice(0, 120)}` });
 }
+
+// A popup that redirects inward: it starts loading before its own interceptor is up.
 {
   const before = ex.blocked.length;
   await page().evaluate(() => {
@@ -102,6 +135,23 @@ await allowedCase("example.com", "https://example.com", /example\.com/);
   await page().waitForTimeout(3000);
   const text = await bodyText();
   results.push({ name: "popup redirect → Steel API", pass: !/"sessions"|websocketUrl/.test(text), detail: `active=${page().url()} | text=${JSON.stringify(text.slice(0, 80))} | blocks=${ex.blocked.slice(before).join(" ; ").slice(0, 160)}` });
+}
+
+// Steel relaunches Chromium when a session is created, which drops every CDP client. The
+// executor must come back on its own — shielded before its first navigation — and a burst of
+// commands during the reattach must share one attach, not open a tab each.
+{
+  const attach = (ex as unknown as { attach: (u: string) => Promise<void> }).attach.bind(ex);
+  let attaches = 0;
+  (ex as unknown as { attach: (u: string) => Promise<void> }).attach = (u) => (attaches++, attach(u));
+  const created = (await (await fetch(`${steel}/v1/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json()) as { id: string };
+  await new Promise((r) => setTimeout(r, 1500));
+  const t0 = Date.now();
+  await Promise.all([ex.snapshot(), ex.snapshot(), ex.snapshot()]);
+  results.push({ name: "reattach after Steel relaunch, one tab for a burst", pass: attaches === 1, detail: `${Date.now() - t0}ms, ${attaches} attach(es), now on ${page().url()}` });
+  await blockedCase("redirect → Steel API, after reattach", "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A3000%2Fv1%2Fsessions");
+  await allowedCase("example.com, after reattach", "https://example.com", /example\.com/);
+  await fetch(`${steel}/v1/sessions/${created.id}/release`, { method: "POST" });
 }
 
 for (const r of results) console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.name}\n      ${r.detail}`);
