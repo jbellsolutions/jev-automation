@@ -32,6 +32,9 @@ export interface CompanionOptions {
   computer?: Computer | null;
   /** The user's Chrome, reached through the bridge extension on /ws/bridge. */
   bridge?: RemoteExecutor | null;
+  /** Bind here instead of loopback: in a container the caller is another container. The API
+   *  still requires the bearer token. */
+  host?: string;
 }
 
 export interface Companion {
@@ -162,6 +165,13 @@ export function createCompanion(opts: CompanionOptions): Companion {
     hub,
     auth,
     async listen(port) {
+      if (opts.host) {
+        const server = makeServer();
+        const bound = await listenOn(server, opts.host, port);
+        servers.push(server);
+        origins = allowedOrigins(bound, opts.extraOrigins);
+        return bound;
+      }
       const v4 = makeServer();
       const bound = await listenOn(v4, "127.0.0.1", port);
       servers.push(v4);

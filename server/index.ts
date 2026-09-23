@@ -28,8 +28,15 @@ const bridge = new RemoteExecutor({
     companion.hub.followDefault();
   },
 });
+// Off loopback, the bearer token is the only thing between the network and this browser.
+const HOST = process.env.JEV_HOST || undefined;
+if (HOST && !["127.0.0.1", "::1", "localhost"].includes(HOST) && !process.env.JEV_TOKEN) {
+  console.error(`JEV_HOST=${HOST} exposes the API beyond this machine; set JEV_TOKEN first.`);
+  process.exit(1);
+}
 const companion = createCompanion({
   decider,
+  host: HOST,
   token: process.env.JEV_TOKEN,
   clientDir,
   defaultSession: process.env.JEV_DEFAULT_SESSION,

@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { type Browser, type BrowserContext, type Page, chromium } from "playwright";
 import type { Action } from "../../core/actions.js";
 import { type PageSnapshot, extractElements } from "../../core/elements.js";
@@ -28,6 +30,18 @@ export interface PlaywrightOptions {
 }
 
 export const VIEWPORT_LIMITS = { minWidth: 640, maxWidth: 1920, minHeight: 400, maxHeight: 1200 };
+
+/** Chromium's DevTools endpoint refuses a Host header that is neither an IP address nor
+ *  localhost (its DNS-rebinding guard), and Steel passes ours through. So a compose service name
+ *  like ws://steel:3000/ is dialled by its address, looked up afresh on every attach. */
+async function dialable(cdpUrl: string): Promise<string> {
+  const url = new URL(cdpUrl);
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host) || host === "localhost") return cdpUrl;
+  const { address, family } = await lookup(host);
+  url.hostname = family === 6 ? `[${address}]` : address;
+  return url.toString();
+}
 
 /** One Chromium controlled through Playwright. Single-user by design: one page at a
  *  time, switching to popups/new tabs automatically so "open in new tab" links work. */
@@ -157,7 +171,7 @@ export class PlaywrightExecutor implements Executor {
    *  point: a second resident browser is what OOM-killed a 2 GB box before. */
   private async attach(cdpUrl: string): Promise<void> {
     try {
-      this.browser = await chromium.connectOverCDP(cdpUrl);
+      this.browser = await chromium.connectOverCDP(await dialable(cdpUrl));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Could not attach to the browser at ${cdpUrl}. Is it running?\n${msg}`);
